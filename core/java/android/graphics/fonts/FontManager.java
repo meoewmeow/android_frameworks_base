@@ -304,6 +304,19 @@ public class FontManager {
     }
 
     /**
+     * Clears all pending font updates.
+     *
+     * @hide
+     */
+    public void clearUpdates() {
+        try {
+            mIFontManager.clearUpdates();
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+    }
+
+    /**
      * Factory method of the FontManager.
      *
      * Do not use this method directly. Use getSystemService(Context.FONT_SERVICE) instead.
