@@ -35,6 +35,7 @@ import com.android.systemui.res.R
 import com.android.systemui.scene.shared.flag.SceneContainerFlag
 import com.android.systemui.shade.ShadeDisplayAware
 import com.android.systemui.shared.clocks.ClockRegistry
+import com.android.systemui.shared.clocks.ClockWidgetLayoutState
 import com.android.systemui.util.settings.SecureSettings
 import com.android.systemui.util.settings.SettingsProxyExt.observerFlow
 import javax.inject.Inject
@@ -76,6 +77,7 @@ interface KeyguardClockRepository {
 
     val forcedClockSize: Flow<ClockSize?>
 
+    val areLockscreenWidgetsEnabled: Boolean
     fun setClockSize(size: ClockSize)
 }
 
@@ -98,14 +100,7 @@ constructor(
     override val forcedClockSize: Flow<ClockSize?> =
         if (featureFlags.isEnabled(Flags.LOCKSCREEN_ENABLE_LANDSCAPE)) {
             configurationRepository.onAnyConfigurationChange.map {
-                if (
-                    context.resources.getBoolean(R.bool.force_small_clock_on_lockscreen) ||
-                    secureSettings.getIntForUser(
-                        Settings.Secure.LOCK_SCREEN_CUSTOM_CLOCK_STYLE,
-                        0, // Default value
-                        UserHandle.USER_CURRENT
-                    ) != 0
-                ) {
+                if (context.resources.getBoolean(R.bool.force_small_clock_on_lockscreen)) {
                     ClockSize.SMALL
                 } else {
                     null
@@ -167,24 +162,30 @@ constructor(
                 initialValue = null,
             )
 
-    private fun getClockSize(): ClockSizeSetting {
-        val isDoubleLineClock = secureSettings.getIntForUser(
-            Settings.Secure.LOCKSCREEN_USE_DOUBLE_LINE_CLOCK,
-            context.resources.getInteger(
-                com.android.internal.R.integer.config_doublelineClockDefault
-            ),
-            UserHandle.USER_CURRENT
-        )
-        val clockStyleEnabled = secureSettings.getIntForUser(
-            Settings.Secure.LOCK_SCREEN_CUSTOM_CLOCK_STYLE,
-            0, // Default value
-            UserHandle.USER_CURRENT
-        ) != 0
-        val clockSettingValue = if (clockStyleEnabled) {
-            0 
-        } else {
-            isDoubleLineClock
+    override val areLockscreenWidgetsEnabled: Boolean
+        get() {
+            val isEnabled = Settings.System.getIntForUser(
+                context.contentResolver,
+                "lockscreen_widgets_enabled",
+                0,
+                UserHandle.USER_CURRENT
+            ) == 1
+            val widgetConfig = Settings.System.getStringForUser(
+                context.contentResolver,
+                "lockscreen_widgets_config",
+                UserHandle.USER_CURRENT
+            ) ?: ""
+            return ClockWidgetLayoutState.fromSettings(isEnabled, widgetConfig).hasWidgets
         }
-        return ClockSizeSetting.fromSettingValue(clockSettingValue)
+    private fun getClockSize(): ClockSizeSetting {
+        return ClockSizeSetting.fromSettingValue(
+            secureSettings.getIntForUser(
+                Settings.Secure.LOCKSCREEN_USE_DOUBLE_LINE_CLOCK,
+                context.resources.getInteger(
+                    com.android.internal.R.integer.config_doublelineClockDefault
+                ),
+                UserHandle.USER_CURRENT,
+            )
+        )
     }
 }

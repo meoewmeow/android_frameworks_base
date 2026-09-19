@@ -41,6 +41,7 @@ import com.android.systemui.keyguard.ui.viewmodel.KeyguardRootViewModel
 import com.android.systemui.lifecycle.repeatWhenAttached
 import com.android.systemui.plugins.keyguard.ui.clocks.AodClockBurnInModel
 import com.android.systemui.plugins.keyguard.ui.clocks.ClockController
+import com.android.systemui.util.ScrimUtils
 import com.android.systemui.util.kotlin.DisposableHandles
 import com.android.systemui.util.ui.value
 import kotlinx.coroutines.DisposableHandle
@@ -63,6 +64,7 @@ object KeyguardClockViewBinder {
         aodBurnInViewModel: AodBurnInViewModel,
     ): DisposableHandle {
         val disposables = DisposableHandles()
+        ScrimUtils.get().attachKeyguardView(keyguardRootView)
         disposables +=
             keyguardRootView.repeatWhenAttached {
                 repeatOnLifecycle(Lifecycle.State.CREATED) {
@@ -95,6 +97,9 @@ object KeyguardClockViewBinder {
                                     viewModel.clockSize.value,
                                 )
                                 applyConstraints(clockSection, keyguardRootView, true)
+                                keyguardClockInteractor.clockEventController.syncClockVisibility(
+                                    animate = false
+                                )
                                 currentClock?.apply { eventListeners.fire { onChangeComplete() } }
                             }
                         }
@@ -111,15 +116,26 @@ object KeyguardClockViewBinder {
                     }
 
                     launch {
-                        viewModel.clockShouldBeCentered.collect {
-                            viewModel.currentClock.value?.let {
-                                if (it.largeClock.config.hasCustomPositionUpdatedAnimation) {
-                                    blueprintInteractor.refreshBlueprint(Type.DefaultClockStepping)
-                                } else {
-                                    blueprintInteractor.refreshBlueprint(Type.DefaultTransition)
+                        viewModel.smallClockTopMargin.collect {
+                            blueprintInteractor.refreshBlueprint(Type.DefaultTransition)
+                        }
+                    }
+
+                    launch {
+                        combine(
+                            viewModel.clockShouldBeCentered,
+                            viewModel.isLargeClockVisible
+                        ) { centered, large -> centered to large }
+                            .collect { (isCentered, isLargeVisible) ->
+                                viewModel.currentClock.value?.let { clock ->
+                                    clock.events.onClockLayoutChanged(isCentered, isLargeVisible)
+                                    if (clock.largeClock.config.hasCustomPositionUpdatedAnimation) {
+                                        blueprintInteractor.refreshBlueprint(Type.DefaultClockStepping)
+                                    } else {
+                                        blueprintInteractor.refreshBlueprint(Type.DefaultTransition)
+                                    }
                                 }
                             }
-                        }
                     }
 
                     launch {

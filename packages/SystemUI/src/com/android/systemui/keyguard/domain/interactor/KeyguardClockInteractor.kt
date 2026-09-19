@@ -38,7 +38,6 @@ import com.android.systemui.statusbar.notification.domain.interactor.HeadsUpNoti
 import com.android.systemui.statusbar.notification.promoted.PromotedNotificationUi
 import com.android.systemui.statusbar.notification.promoted.domain.interactor.AODPromotedNotificationInteractor
 import com.android.systemui.util.kotlin.combine
-import com.android.systemui.utils.coroutines.flow.flatMapLatestConflated
 import com.android.systemui.wallpapers.domain.interactor.WallpaperFocalAreaInteractor
 import javax.inject.Inject
 import kotlinx.coroutines.CoroutineScope
@@ -92,6 +91,9 @@ constructor(
 
     var clock: ClockController? by keyguardClockRepository.clockEventController::clock
 
+    val areLockscreenWidgetsEnabled: Boolean
+        get() = keyguardClockRepository.areLockscreenWidgetsEnabled
+
     val isAodPromotedNotificationPresent: Flow<Boolean> =
         if (PromotedNotificationUi.isEnabled) {
             aodPromotedNotificationInteractor.isPresent
@@ -133,18 +135,12 @@ constructor(
         }
 
     val clockSize: StateFlow<ClockSize> =
-        selectedClockSize
-            .flatMapLatestConflated { selectedSize ->
-                if (selectedSize == ClockSizeSetting.SMALL) {
-                    flowOf(ClockSize.SMALL)
-                } else {
-                    dynamicClockSize
-                }
-            }
+        dynamicClockSize
+            .map { ClockSize.SMALL }
             .stateIn(
                 scope = applicationScope,
                 started = SharingStarted.Eagerly,
-                initialValue = ClockSize.LARGE,
+                initialValue = ClockSize.SMALL,
             )
 
     val clockShouldBeCentered: Flow<Boolean> =
@@ -217,6 +213,9 @@ constructor(
         }
 
     fun handleFidgetTap(x: Float, y: Float) {
+        if (!com.android.systemui.Flags.clockFidgetAnimation()) {
+            return
+        }
 
         if (wallpaperFocalAreaInteractor.hasFocalArea.value) {
             wallpaperFocalAreaInteractor.sendTapPosition(x, y)

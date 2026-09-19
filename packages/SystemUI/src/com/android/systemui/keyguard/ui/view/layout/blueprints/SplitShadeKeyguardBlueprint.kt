@@ -33,9 +33,8 @@ import com.android.systemui.keyguard.ui.view.layout.sections.DefaultShortcutsSec
 import com.android.systemui.keyguard.ui.view.layout.sections.DefaultStatusBarSection
 import com.android.systemui.keyguard.ui.view.layout.sections.AxDynamicBarKeyguardChipSection
 import com.android.systemui.keyguard.ui.view.layout.sections.KeyguardSectionsModule
-import com.android.systemui.keyguard.ui.view.layout.sections.KeyguardClockStyleSection
+import com.android.systemui.keyguard.ui.view.layout.sections.KeyguardWidgetViewSection
 import com.android.systemui.keyguard.ui.view.layout.sections.KeyguardSliceViewSection
-import com.android.systemui.keyguard.ui.view.layout.sections.KeyguardWeatherViewSection
 import com.android.systemui.keyguard.ui.view.layout.sections.SmartspaceSection
 import com.android.systemui.keyguard.ui.view.layout.sections.SplitShadeGuidelines
 import com.android.systemui.keyguard.ui.view.layout.sections.SplitShadeMediaSection
@@ -70,10 +69,9 @@ constructor(
     aodNotificationIconsSection: AodNotificationIconsSection,
     aodBurnInSection: AodBurnInSection,
     clockSection: ClockSection,
+    keyguardWidgetViewSection: KeyguardWidgetViewSection,
     smartspaceSection: SmartspaceSection,
-    keyguardClockStyleSection: KeyguardClockStyleSection,
     mediaSection: SplitShadeMediaSection,
-    keyguardWeatherViewSection: KeyguardWeatherViewSection,
     keyguardSliceViewSection: KeyguardSliceViewSection,
     axDynamicBarKeyguardChipSection: AxDynamicBarKeyguardChipSection,
 ) : KeyguardBlueprint {
@@ -97,9 +95,8 @@ constructor(
             smartspaceSection,
             aodBurnInSection,
             clockSection,
-            keyguardWeatherViewSection,
+            keyguardWidgetViewSection,
             keyguardSliceViewSection,
-            keyguardClockStyleSection,
             mediaSection,
             defaultDeviceEntrySection, // Add LAST: Intentionally has z-order above other views.
         )

@@ -65,9 +65,11 @@ import com.android.systemui.plugins.keyguard.ui.clocks.ClockFaceController.Compa
 import com.android.systemui.plugins.keyguard.ui.clocks.ClockMessageBuffers
 import com.android.systemui.plugins.keyguard.ui.clocks.ClockTickRate
 import com.android.systemui.plugins.keyguard.ui.clocks.TimeFormatKind
+import com.android.systemui.plugins.statusbar.StatusBarStateController
 import com.android.systemui.res.R as SysuiR
 import com.android.systemui.scene.shared.flag.SceneContainerFlag
 import com.android.systemui.settings.UserTracker
+import com.android.systemui.shared.clocks.view.AxClockView
 import com.android.systemui.shared.regionsampling.RegionSampler
 import com.android.systemui.statusbar.policy.BatteryController
 import com.android.systemui.statusbar.policy.BatteryController.BatteryStateChangeCallback
@@ -103,6 +105,7 @@ constructor(
     private val keyguardUpdateMonitor: KeyguardUpdateMonitor,
     // TODO b/362719719 - We should use the configuration controller associated with the display.
     private val configurationController: ConfigurationController,
+    private val statusBarStateController: StatusBarStateController,
     @DisplaySpecific private val resources: Resources,
     @DisplaySpecific val context: Context,
     @Main private val mainExecutor: DelayableExecutor,
@@ -244,6 +247,7 @@ constructor(
     private var isCharging = false
     private var isKeyguardVisible = false
     private var isRegistered = false
+    private var areClockViewsShowing: Boolean? = null
     private val regionSamplingEnabled = featureFlags.isEnabled(REGION_SAMPLING)
     private var largeClockOnSecondaryDisplay = false
 
@@ -257,6 +261,10 @@ constructor(
         val isLightTheme = TypedValue()
         context.theme.resolveAttribute(R.attr.isLightTheme, isLightTheme, true)
         return isLightTheme.data == 0
+    }
+
+    private fun onClockUiModeChanged() {
+        clock?.run { events.onUiModeChanged(isDarkTheme()) }
     }
 
     private fun updateColors() {
@@ -277,6 +285,10 @@ constructor(
             logger.i({ "updateColors(isThemeDark = $bool1)" }) { bool1 = isDarkTheme }
             smallClock.updateTheme { it.copy(isDarkTheme = isDarkTheme) }
             largeClock.updateTheme { it.copy(isDarkTheme = isDarkTheme) }
+        }
+        clock?.run {
+            smallClock.events.onRegionDarknessChanged(isDarkTheme)
+            largeClock.events.onRegionDarknessChanged(isDarkTheme)
         }
     }
 
@@ -308,7 +320,10 @@ constructor(
     var smallTimeListener: TimeListener? = null
     var largeTimeListener: TimeListener? = null
     val shouldTimeListenerRun: Boolean
-        get() = !isPreview && isKeyguardVisible && dozeAmount.value < DOZE_TICKRATE_THRESHOLD
+        get() =
+            !isPreview &&
+                shouldShowClock &&
+                dozeAmount.value < DOZE_TICKRATE_THRESHOLD
 
     private var weatherData: WeatherData? = null
     private var zenData: ZenData? = null
@@ -338,6 +353,9 @@ constructor(
                 logger.i("onDensityOrFontScaleChanged")
                 updateFontSizes()
             }
+            override fun onUiModeChanged() {
+                onClockUiModeChanged()
+            }
         }
 
     private val batteryCallback =
@@ -356,9 +374,16 @@ constructor(
     private val localeBroadcastReceiver =
         object : BroadcastReceiver() {
             override fun onReceive(context: Context, intent: Intent) {
-                clock?.run {
-                    events.onLocaleChanged(Locale.getDefault())
-                    events.onTimeFormatChanged(getTimeFormatKind())
+                when (intent.action) {
+                    Intent.ACTION_LOCALE_CHANGED -> {
+                        clock?.run {
+                            events.onLocaleChanged(Locale.getDefault())
+                            events.onTimeFormatChanged(getTimeFormatKind())
+                        }
+                    }
+                    Intent.ACTION_DATE_CHANGED -> {
+                        clock?.run { events.onDateChanged() }
+                    }
                 }
             }
         }
@@ -371,9 +396,8 @@ constructor(
                 if (visible) {
                     refreshTime()
                 }
-
-                smallTimeListener?.update(shouldTimeListenerRun)
-                largeTimeListener?.update(shouldTimeListenerRun)
+                syncClockVisibility(animate = visible)
+                updateTimeListenersRunning()
             }
 
             override fun onTimeFormatChanged(timeFormat: String?) {
@@ -393,18 +417,35 @@ constructor(
                 weatherData = data
                 clock?.run { events.onWeatherDataChanged(data) }
             }
+            override fun onStartedWakingUp() {
+                clock?.smallClock?.events?.onStartedWakingUp()
+                clock?.largeClock?.events?.onStartedWakingUp()
+            }
+            override fun onStartedGoingToSleep(why: Int) {
+                clock?.smallClock?.events?.onScreenOff(true)
+                clock?.largeClock?.events?.onScreenOff(true)
+                val keyguardVisible = ScrimUtils.get().isKeyguardShowing()
+                clock?.smallClock?.events?.onStartedGoingToSleep(keyguardVisible)
+                clock?.largeClock?.events?.onStartedGoingToSleep(keyguardVisible)
+            }
 
             override fun onTimeChanged() {
                 if (ScrimUtils.get().isKeyguardShowing()) {
                     refreshTime()
                 }
             }
-
-            private fun refreshTime() {
-                clock?.smallClock?.events?.onTimeTick()
-                clock?.largeClock?.events?.onTimeTick()
-            }
         }
+
+    private fun refreshTime() {
+        clock?.smallClock?.events?.onTimeTick()
+        clock?.largeClock?.events?.onTimeTick()
+    }
+
+    private fun updateTimeListenersRunning() {
+        val shouldRun = shouldTimeListenerRun
+        smallTimeListener?.update(shouldRun)
+        largeTimeListener?.update(shouldRun)
+    }
 
     @DeprecatedSysuiVisibleForTesting
     @VisibleForTesting(otherwise = VisibleForTesting.PRIVATE)
@@ -439,6 +480,75 @@ constructor(
             }
         }
 
+    private val dozeCallback =
+            object : StatusBarStateController.StateListener {
+                override fun onDozingChanged(isDozing: Boolean) {
+                    clock?.smallClock?.events?.onDozeChanged(isDozing)
+                    clock?.largeClock?.events?.onDozeChanged(isDozing)
+                    syncClockVisibility(animate = false)
+                    updateTimeListenersRunning()
+                }
+                override fun onDozeAmountChanged(linear: Float, eased: Float) {
+                    clock?.smallClock?.events?.onDozeAmountChanged(linear, eased)
+                    clock?.largeClock?.events?.onDozeAmountChanged(linear, eased)
+                }
+                override fun onPulsingChanged(pulsing: Boolean) {
+                    clock?.smallClock?.events?.onPulsingChanged(pulsing)
+                    clock?.largeClock?.events?.onPulsingChanged(pulsing)
+                    syncClockVisibility(animate = false)
+                    updateTimeListenersRunning()
+                }
+            }
+    private var depthBlockedByFading = false
+    private var depthBlockedByGoingAway = false
+    private var depthBlockedByBouncer = false
+    private var depthBlockedByAlpha = false
+    private var depthBlockedByDozeAmount = false
+    private val depthScrimListener = object : ScrimUtils.ScrimEventListener {
+        override fun onKeyguardShowingChanged(showing: Boolean) {
+            if (showing) {
+                refreshTime()
+            }
+            syncClockVisibility(animate = showing)
+            updateTimeListenersRunning()
+            updateDepthVisibility()
+        }
+
+        override fun onKeyguardFadingAwayChanged(fadingAway: Boolean) {
+            depthBlockedByFading = fadingAway
+            syncClockVisibility(animate = false)
+            updateTimeListenersRunning()
+            updateDepthVisibility()
+        }
+        override fun onKeyguardGoingAwayChanged(goingAway: Boolean) {
+            depthBlockedByGoingAway = goingAway
+            syncClockVisibility(animate = false)
+            updateTimeListenersRunning()
+            updateDepthVisibility()
+        }
+        override fun onPrimaryBouncerShowingChanged(showing: Boolean) {
+            depthBlockedByBouncer = showing
+            updateDepthVisibility()
+        }
+        override fun onDozingChanged(dozing: Boolean) {
+            updateDepthVisibility()
+        }
+        override fun onKeyguardAlphaChanged(alpha: Float) {
+            depthBlockedByAlpha = alpha < 1f
+            updateDepthVisibility()
+        }
+    }
+    private fun updateDepthVisibility() {
+        val scrim = ScrimUtils.get()
+        val visible = scrim.isKeyguardShowing()
+            && !scrim.isDozing()
+            && !depthBlockedByFading
+            && !depthBlockedByGoingAway
+            && !depthBlockedByBouncer
+            && !depthBlockedByAlpha
+            && !depthBlockedByDozeAmount
+        clock?.events?.onDepthEffectVisibilityChanged(visible)
+    }
     private fun handleZenMode(zen: Int) {
         val mode = ZenMode.fromInt(zen)
         if (mode == null) {
@@ -481,18 +591,25 @@ constructor(
         isRegistered = true
         logger.i("registerListeners(isPreview = $isPreview)")
 
+        val filter = IntentFilter().apply {
+            addAction(Intent.ACTION_LOCALE_CHANGED)
+            addAction(Intent.ACTION_DATE_CHANGED)
+        }
         broadcastDispatcher.registerReceiver(
             localeBroadcastReceiver,
-            IntentFilter(Intent.ACTION_LOCALE_CHANGED),
+            filter,
         )
 
         // Proactively update timezone on listener registration to avoid race conditions on startup.
         clock?.events?.onTimeZoneChanged(IcuTimeZone.getDefault())
 
+        statusBarStateController.addCallback(dozeCallback)
         configurationController.addCallback(configListener)
         batteryController.addCallback(batteryCallback)
         keyguardUpdateMonitor.registerCallback(keyguardUpdateMonitorCallback)
         zenModeController.addCallback(zenModeCallback)
+        ScrimUtils.get().addListener(depthScrimListener)
+        syncClockVisibility(animate = false)
         if (SceneContainerFlag.isEnabled) {
             val currentState = keyguardTransitionInteractor.getCurrentState()
             val startedState = keyguardTransitionInteractor.getStartedState()
@@ -501,8 +618,7 @@ constructor(
                     currentState == DOZING || startedState == DOZING
             handleDoze(if (isDozing) 1f else 0f)
         }
-        smallTimeListener?.update(shouldTimeListenerRun)
-        largeTimeListener?.update(shouldTimeListenerRun)
+        updateTimeListenersRunning()
 
         bgExecutor.execute {
             // Query ZenMode data
@@ -516,19 +632,62 @@ constructor(
         logger.i("unregisterListeners(isPreview = $isPreview)")
 
         broadcastDispatcher.unregisterReceiver(localeBroadcastReceiver)
+        statusBarStateController.removeCallback(dozeCallback)
         configurationController.removeCallback(configListener)
         batteryController.removeCallback(batteryCallback)
         keyguardUpdateMonitor.removeCallback(keyguardUpdateMonitorCallback)
         zenModeController.removeCallback(zenModeCallback)
+        ScrimUtils.get().removeListener(depthScrimListener)
         smallRegionSampler?.stopRegionSampler()
         largeRegionSampler?.stopRegionSampler()
         smallTimeListener?.stop()
         largeTimeListener?.stop()
+        areClockViewsShowing = null
         clock?.run {
             smallClock.view.removeOnAttachStateChangeListener(smallClockOnAttachStateChangeListener)
             largeClock.view.removeOnAttachStateChangeListener(largeClockOnAttachStateChangeListener)
         }
         smallClockFrame?.viewTreeObserver?.removeOnGlobalLayoutListener(onGlobalLayoutListener)
+    }
+
+    fun syncClockVisibility(animate: Boolean) {
+        updateClockVisibility(shouldShowClock, animate)
+    }
+
+    private val shouldShowClock: Boolean
+        get() =
+            largeClockOnSecondaryDisplay ||
+                (!depthBlockedByFading &&
+                    !depthBlockedByGoingAway &&
+                    (isKeyguardVisible ||
+                        statusBarStateController.isDozing ||
+                        statusBarStateController.isPulsing))
+
+    private fun updateClockVisibility(showing: Boolean, animate: Boolean) {
+        if (isPreview) return
+        val currentClock = clock ?: return
+        val shouldAnimate = animate && areClockViewsShowing == false
+        areClockViewsShowing = showing
+        if (showing) {
+            showClock(currentClock.smallClock, shouldAnimate)
+            showClock(currentClock.largeClock, shouldAnimate)
+            return
+        }
+        hideClock(currentClock.smallClock)
+        hideClock(currentClock.largeClock)
+    }
+
+    private fun hideClock(face: ClockFaceController) {
+        val view = face.view as? AxClockView ?: return
+        view.animAlpha = 0f
+    }
+
+    private fun showClock(face: ClockFaceController, animate: Boolean) {
+        val view = face.view as? AxClockView ?: return
+        view.animAlpha = 1f
+        if (animate) {
+            face.animations.enter()
+        }
     }
 
     fun setFallbackWeatherData(data: WeatherData) {
@@ -606,9 +765,14 @@ constructor(
             largeClock.animations.doze(doze)
             Trace.endSection()
         }
-        smallTimeListener?.update(doze < DOZE_TICKRATE_THRESHOLD)
-        largeTimeListener?.update(doze < DOZE_TICKRATE_THRESHOLD)
         dozeAmount.value = doze
+        updateTimeListenersRunning()
+
+        val blocked = doze > 0f && doze < 1f
+        if (depthBlockedByDozeAmount != blocked) {
+            depthBlockedByDozeAmount = blocked
+            updateDepthVisibility()
+        }
     }
 
     @DeprecatedSysuiVisibleForTesting
