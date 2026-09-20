@@ -47,19 +47,29 @@ public class TrickyStoreService {
 
     private final Set<String> mHackPackages = ConcurrentHashMap.newKeySet();
     private final Set<String> mGeneratePackages = ConcurrentHashMap.newKeySet();
+    private final Set<String> mSkipPackages = ConcurrentHashMap.newKeySet();
     private final Map<String, Mode> mPackageModes = new ConcurrentHashMap<>();
 
     private volatile Boolean mTeeBroken = null;
     private volatile long mLastRevocationCheckMs = 0L;
+    private volatile long mLastTargetsRefreshMs = 0L;
+    private static final long TARGETS_REFRESH_COOLDOWN_MS = 5_000L;
     private static final long REVOCATION_CHECK_COOLDOWN_MS = 24 * 60 * 60 * 1000L;
+    private static final long CACHE_TRUST_WINDOW_MS = 7L * 24 * 60 * 60 * 1000L;
+    private static final java.io.File REVOCATION_CACHE_FILE =
+        new java.io.File("/data/system/trickystore/revocation_cache.json");
     private volatile CustomPatchLevel mCustomPatchLevel = null;
+    private final Map<String, CustomPatchLevel> mPerPackagePatchLevels = new ConcurrentHashMap<>();
     private volatile String mLastKeyboxFingerprint = null;
+    // Rime: master switch from Settings.System; null means "not fetched yet" and
+    // is treated as enabled so existing installs keep spoofing after this update.
+    private volatile String mEnabled = null;
 
     private final KeyBoxManager mKeyBoxManager;
 
     /** @hide */
     public enum Mode {
-        AUTO, LEAF_HACK, GENERATE
+        AUTO, LEAF_HACK, GENERATE, SKIP
     }
 
     /** @hide */
@@ -124,9 +134,12 @@ public class TrickyStoreService {
     }
 
     public void refreshTargets() {
+        // Rime: keep the master switch in sync with the same refresh cadence.
+        mEnabled = fetchFromAms(am -> am.getSpoofTrickyStoreEnabled());
         String content = fetchFromAms(am -> am.getSpoofTrickyStoreTarget());
         mHackPackages.clear();
         mGeneratePackages.clear();
+        mSkipPackages.clear();
         mPackageModes.clear();
 
         if (content == null || content.isEmpty()) {
@@ -141,7 +154,8 @@ public class TrickyStoreService {
                 parseTargetsText(trimmed);
             }
             Log.i(TAG, "Updated target packages: hack=" + mHackPackages +
-                  ", generate=" + mGeneratePackages + ", modes=" + mPackageModes);
+                  ", generate=" + mGeneratePackages + ", skip=" + mSkipPackages +
+                  ", modes=" + mPackageModes);
         } catch (Exception e) {
             Log.e(TAG, "Failed to parse target packages", e);
         }
@@ -162,6 +176,10 @@ public class TrickyStoreService {
                 String pkg = line.substring(0, line.length() - 1).trim();
                 mHackPackages.add(pkg);
                 mPackageModes.put(pkg, Mode.LEAF_HACK);
+            } else if (line.endsWith("-")) {
+                String pkg = line.substring(0, line.length() - 1).trim();
+                mSkipPackages.add(pkg);
+                mPackageModes.put(pkg, Mode.SKIP);
             } else {
                 mPackageModes.put(line, Mode.AUTO);
             }
@@ -196,6 +214,7 @@ public class TrickyStoreService {
                 mPackageModes.put(pkg, mode);
                 if (mode == Mode.LEAF_HACK) mHackPackages.add(pkg);
                 if (mode == Mode.GENERATE) mGeneratePackages.add(pkg);
+                if (mode == Mode.SKIP) mSkipPackages.add(pkg);
             }
             reader.endArray();
         }
@@ -256,6 +275,7 @@ public class TrickyStoreService {
 
     public void refreshPatchLevel() {
         String content = fetchFromAms(am -> am.getSpoofTrickyStorePatch());
+        mPerPackagePatchLevels.clear();
         if (content == null || content.isEmpty()) {
             mCustomPatchLevel = null;
             return;
@@ -274,46 +294,68 @@ public class TrickyStoreService {
     }
 
     private void parsePatchText(String content) {
-        StringBuilder filtered = new StringBuilder();
+        String currentPackage = null;
+        String system = null, vendor = null, boot = null, all = null;
+
         for (String raw : content.split("\n")) {
             String line = raw.trim();
-            if (!line.isEmpty() && !line.startsWith("#")) {
-                filtered.append(line).append("\n");
+            if (line.isEmpty() || line.startsWith("#")) continue;
+
+            if (line.startsWith("[") && line.endsWith("]")) {
+                flushPatchSection(currentPackage, system, vendor, boot, all);
+                currentPackage = line.substring(1, line.length() - 1).trim();
+                system = vendor = boot = all = null;
+                continue;
             }
-        }
 
-        String lines = filtered.toString().trim();
-        if (lines.isEmpty()) {
-            mCustomPatchLevel = null;
-            return;
-        }
-
-        String[] parts = lines.split("\n");
-        if (parts.length == 1 && !parts[0].contains("=")) {
-            mCustomPatchLevel = new CustomPatchLevel(parts[0], parts[0], parts[0], parts[0]);
-            return;
-        }
-
-        String system = null, vendor = null, boot = null, all = null;
-        for (String part : parts) {
-            int idx = part.indexOf('=');
+            int idx = line.indexOf('=');
             if (idx > 0) {
-                String key = part.substring(0, idx).trim().toLowerCase();
-                String value = part.substring(idx + 1).trim();
+                String key = line.substring(0, idx).trim().toLowerCase();
+                String value = line.substring(idx + 1).trim();
                 switch (key) {
                     case "system": system = value; break;
                     case "vendor": vendor = value; break;
-                    case "boot": boot = value; break;
-                    case "all": all = value; break;
+                    case "boot":   boot   = value; break;
+                    case "all":    all    = value; break;
                 }
+            } else {
+                all = line;
             }
         }
-        mCustomPatchLevel = new CustomPatchLevel(
-            system != null ? system : all,
-            vendor != null ? vendor : all,
-            boot != null ? boot : all,
-            all
+        flushPatchSection(currentPackage, system, vendor, boot, all);
+    }
+
+    private static String resolvePatchTemplate(String value) {
+        if (value == null) return null;
+        java.util.regex.Matcher m = java.util.regex.Pattern
+            .compile("^YYYY-MM-(\\d{2})$").matcher(value.trim());
+        if (!m.matches()) return value;
+        String day = m.group(1);
+        java.util.Calendar cal = java.util.Calendar.getInstance(
+            java.util.TimeZone.getTimeZone("UTC"));
+        return String.format(java.util.Locale.US, "%04d-%02d-%s",
+            cal.get(java.util.Calendar.YEAR),
+            cal.get(java.util.Calendar.MONTH) + 1,
+            day);
+    }
+
+    private void flushPatchSection(String pkg, String system, String vendor, String boot, String all) {
+        if (system == null && vendor == null && boot == null && all == null) return;
+        String resolvedAll    = resolvePatchTemplate(all);
+        String resolvedSystem = resolvePatchTemplate(system);
+        String resolvedVendor = resolvePatchTemplate(vendor);
+        String resolvedBoot   = resolvePatchTemplate(boot);
+        CustomPatchLevel level = new CustomPatchLevel(
+            resolvedSystem != null ? resolvedSystem : resolvedAll,
+            resolvedVendor != null ? resolvedVendor : resolvedAll,
+            resolvedBoot   != null ? resolvedBoot   : resolvedAll,
+            resolvedAll
         );
+        if (pkg == null) {
+            mCustomPatchLevel = level;
+        } else {
+            mPerPackagePatchLevels.put(pkg, level);
+        }
     }
 
     private void parsePatchJson(String content) throws IOException {
@@ -325,19 +367,35 @@ public class TrickyStoreService {
                 switch (key) {
                     case "system": system = reader.nextString(); break;
                     case "vendor": vendor = reader.nextString(); break;
-                    case "boot": boot = reader.nextString(); break;
-                    case "all": all = reader.nextString(); break;
+                    case "boot":   boot   = reader.nextString(); break;
+                    case "all":    all    = reader.nextString(); break;
+                    case "packages":
+                        reader.beginObject();
+                        while (reader.hasNext()) {
+                            String pkg = reader.nextName();
+                            String ps = null, pv = null, pb = null, pa = null;
+                            reader.beginObject();
+                            while (reader.hasNext()) {
+                                String pk = reader.nextName();
+                                switch (pk) {
+                                    case "system": ps = reader.nextString(); break;
+                                    case "vendor": pv = reader.nextString(); break;
+                                    case "boot":   pb = reader.nextString(); break;
+                                    case "all":    pa = reader.nextString(); break;
+                                    default: reader.skipValue(); break;
+                                }
+                            }
+                            reader.endObject();
+                            flushPatchSection(pkg, ps, pv, pb, pa);
+                        }
+                        reader.endObject();
+                        break;
                     default: reader.skipValue(); break;
                 }
             }
             reader.endObject();
         }
-        mCustomPatchLevel = new CustomPatchLevel(
-            system != null ? system : all,
-            vendor != null ? vendor : all,
-            boot != null ? boot : all,
-            all
-        );
+        flushPatchSection(null, system, vendor, boot, all);
     }
 
     private void ensureTeeStatus() {
@@ -376,18 +434,20 @@ public class TrickyStoreService {
             Log.d(TAG, "Skipping revocation check — ran within 24h");
             return;
         }
-        mLastRevocationCheckMs = now;
         new Thread(() -> {
             try {
                 List<String> serials = extractCertSerials(xml);
                 if (serials.isEmpty()) return;
                 java.net.URL url = new java.net.URL(
-                        "https://android.googleapis.com/attestation/status");
+                        "https://android.googleapis.com/attestation/status?encrypted=0");
                 java.net.HttpURLConnection conn =
                         (java.net.HttpURLConnection) url.openConnection();
                 conn.setConnectTimeout(10_000);
                 conn.setReadTimeout(10_000);
-                if (conn.getResponseCode() != java.net.HttpURLConnection.HTTP_OK) return;
+                if (conn.getResponseCode() != java.net.HttpURLConnection.HTTP_OK) {
+                    checkCachedRevocation(serials);
+                    return;
+                }
                 String body = new String(
                         conn.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
                 org.json.JSONObject entries =
@@ -400,12 +460,69 @@ public class TrickyStoreService {
                     if ("REVOKED".equals(status) || "SUSPENDED".equals(status)) {
                         Log.w(TAG, "Keybox serial " + serial + " is " + status +
                                 " — attestation may fail");
+                        writeCachedRevokedSerial(serial);
                     }
                 }
+                mLastRevocationCheckMs = now;
             } catch (Exception e) {
-                Log.w(TAG, "Keybox revocation check failed", e);
+                Log.w(TAG, "Keybox revocation check failed, trying offline cache", e);
+                try {
+                    checkCachedRevocation(extractCertSerials(xml));
+                } catch (Exception inner) {
+                    Log.w(TAG, "Offline revocation cache check also failed", inner);
+                }
             }
         }, "TrickyStore-RevocationCheck").start();
+    }
+
+    /**
+     * Writes [serial] to a small private cache file so a later network
+     * failure can still flag it. Downgrade-only: this cache is only ever
+     * consulted to log a warning, never to assert a keybox is safe.
+     */
+    private void writeCachedRevokedSerial(String serial) {
+        try {
+            REVOCATION_CACHE_FILE.getParentFile().mkdirs();
+            org.json.JSONObject obj = new org.json.JSONObject();
+            obj.put("serial", serial);
+            obj.put("cachedAt", System.currentTimeMillis());
+            try (java.io.FileWriter fw = new java.io.FileWriter(REVOCATION_CACHE_FILE)) {
+                fw.write(obj.toString());
+            }
+            android.system.Os.chmod(REVOCATION_CACHE_FILE.getAbsolutePath(), 0600);
+        } catch (Exception e) {
+            Log.w(TAG, "Failed to write revocation cache", e);
+        }
+    }
+
+    /**
+     * Logging-only fallback used when the live revocation fetch fails.
+     * Reads the cached bad serial, if any, and logs a warning if it matches
+     * one of the current keybox's serials and the cache is still within the
+     * trust window. Never mutates keybox state — that decision stays with
+     * the Settings UI layer.
+     */
+    private void checkCachedRevocation(List<String> serials) {
+        if (!REVOCATION_CACHE_FILE.exists()) return;
+        try {
+            String content = new String(
+                java.nio.file.Files.readAllBytes(REVOCATION_CACHE_FILE.toPath()),
+                StandardCharsets.UTF_8);
+            org.json.JSONObject obj = new org.json.JSONObject(content);
+            long cachedAt = obj.optLong("cachedAt", 0L);
+            if (cachedAt == 0L ||
+                System.currentTimeMillis() - cachedAt > CACHE_TRUST_WINDOW_MS) {
+                return;
+            }
+            String cachedSerial = obj.optString("serial", "");
+            if (!cachedSerial.isEmpty() && serials.contains(cachedSerial)) {
+                Log.w(TAG, "Keybox serial " + cachedSerial +
+                        " was cached as revoked/suspended (offline fallback,"
+                        + " live check unavailable)");
+            }
+        } catch (Exception e) {
+            Log.w(TAG, "Failed to read revocation cache", e);
+        }
     }
 
     private List<String> extractCertSerials(String xml) {
@@ -461,10 +578,12 @@ public class TrickyStoreService {
 
     public boolean needHack(int callingUid, String[] packages) {
         if (packages == null) return false;
-        refreshTargets();
+        maybeRefreshTargets();
+        if (!isEnabled()) return false;
         ensureTeeStatus();
         for (String pkg : packages) {
             Mode mode = mPackageModes.get(pkg);
+            if (mode == Mode.SKIP) continue;
             if (mode == Mode.LEAF_HACK) return true;
             if (mode == Mode.AUTO && !mTeeBroken) return true;
         }
@@ -473,14 +592,29 @@ public class TrickyStoreService {
 
     public boolean needGenerate(int callingUid, String[] packages) {
         if (packages == null) return false;
-        refreshTargets();
+        maybeRefreshTargets();
+        if (!isEnabled()) return false;
         ensureTeeStatus();
         for (String pkg : packages) {
             Mode mode = mPackageModes.get(pkg);
+            if (mode == Mode.SKIP) continue;
             if (mode == Mode.GENERATE) return true;
             if (mode == Mode.AUTO && mTeeBroken) return true;
         }
         return false;
+    }
+
+    // Rime: master switch support (Settings.System.SPOOF_TRICKYSTORE_ENABLED).
+    private boolean isEnabled() {
+        return mEnabled == null || !("0".equals(mEnabled) || "false".equalsIgnoreCase(mEnabled));
+    }
+
+    private void maybeRefreshTargets() {
+        long now = System.currentTimeMillis();
+        if (now - mLastTargetsRefreshMs >= TARGETS_REFRESH_COOLDOWN_MS) {
+            mLastTargetsRefreshMs = now;
+            refreshTargets();
+        }
     }
 
     public KeyBoxManager getKeyBoxManager() {
@@ -491,6 +625,37 @@ public class TrickyStoreService {
     public CustomPatchLevel getCustomPatchLevel() {
         refreshPatchLevel();
         return mCustomPatchLevel;
+    }
+
+    public CustomPatchLevel getCustomPatchLevelForPackage(String[] packages) {
+        refreshPatchLevel();
+        if (packages != null) {
+            for (String pkg : packages) {
+                CustomPatchLevel level = mPerPackagePatchLevels.get(pkg);
+                if (level != null) return level;
+            }
+        }
+        return mCustomPatchLevel;
+    }
+
+    /**
+     * Returns true if the given patch date string is more than 12 months old.
+     * Accepts YYYY-MM-DD only; unparsable or null input is treated as not stale
+     * (we don't want to warn on a value we can't understand).
+     */
+    private static final long PATCH_STALE_THRESHOLD_MS = 365L * 24 * 60 * 60 * 1000L;
+
+    public static boolean isPatchLevelStale(String patchDate) {
+        if (patchDate == null || patchDate.isEmpty()) return false;
+        try {
+            java.text.SimpleDateFormat sdf =
+                new java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US);
+            sdf.setLenient(false);
+            long patchMs = sdf.parse(patchDate.trim()).getTime();
+            return System.currentTimeMillis() - patchMs > PATCH_STALE_THRESHOLD_MS;
+        } catch (Exception e) {
+            return false;
+        }
     }
 
     public boolean hasKeyboxes() {

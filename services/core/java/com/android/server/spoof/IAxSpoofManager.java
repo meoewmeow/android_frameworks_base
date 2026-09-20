@@ -24,6 +24,10 @@ public interface IAxSpoofManager {
 
     String getPifSpoofPhotos();
 
+    String getPifEnabled();
+
+    String getTrickyStoreEnabled();
+
     String getGamePropsConfig();
 
     String getTrickyStoreTarget();

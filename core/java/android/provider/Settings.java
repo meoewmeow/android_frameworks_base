@@ -8049,6 +8049,20 @@ public final class Settings {
             Secure.WIFI_WATCHDOG_PING_TIMEOUT_MS;
 
         /**
+         * Whether the Play Integrity Fix spoofing service is enabled.
+         * @hide
+         */
+        @Readable
+        public static final String SPOOF_PIF_ENABLED = "spoof_pif_enabled";
+
+        /**
+         * Whether the TrickyStore key attestation spoofing service is enabled.
+         * @hide
+         */
+        @Readable
+        public static final String SPOOF_TRICKYSTORE_ENABLED = "spoof_trickystore_enabled";
+
+        /**
          * Checks if the specified app can modify system settings. As of API
          * level 23, an app cannot modify system settings unless it declares the
          * {@link android.Manifest.permission#WRITE_SETTINGS}
@@ -15050,6 +15064,7 @@ public final class Settings {
          * @hide
          */
         public static final String SPOOF_TRICKYSTORE_PATCH = "spoof_trickystore_patch";
+
     }
 
     /**
@@ -22716,6 +22731,7 @@ public final class Settings {
             public static final String WEAR_SYSTEM_STATUS_TRAY_CONFIGURATION =
                     "wear_system_status_tray_configuration";
         }
+
     }
 
     /**

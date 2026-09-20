@@ -43,7 +43,15 @@ public class AxSpoofManager implements IAxSpoofManager {
             Settings.Secure.SPOOF_TRICKYSTORE_PATCH,
     };
 
+    // Master switches live in Settings.System; the services treat a missing
+    // value as enabled so existing installs keep spoofing after this update.
+    private static final String[] WATCHED_SYSTEM_KEYS = {
+            Settings.System.SPOOF_PIF_ENABLED,
+            Settings.System.SPOOF_TRICKYSTORE_ENABLED,
+    };
+
     private final Map<String, String> mCache = new ConcurrentHashMap<>();
+    private final Map<String, String> mSystemCache = new ConcurrentHashMap<>();
     private final HandlerThread mHandlerThread;
     private final Handler mHandler;
 
@@ -70,6 +78,9 @@ public class AxSpoofManager implements IAxSpoofManager {
         for (String key : WATCHED_KEYS) {
             refreshKey(key);
         }
+        for (String key : WATCHED_SYSTEM_KEYS) {
+            refreshSystemKey(key);
+        }
 
         mObserver = new ContentObserver(mHandler) {
             @Override
@@ -77,13 +88,21 @@ public class AxSpoofManager implements IAxSpoofManager {
                 if (uri == null) return;
                 final String last = uri.getLastPathSegment();
                 if (last == null) return;
-                refreshKey(last);
+                if (isSystemKey(last)) {
+                    refreshSystemKey(last);
+                } else {
+                    refreshKey(last);
+                }
                 Log.i(TAG, "Spoof config refreshed: " + last);
             }
         };
         for (String key : WATCHED_KEYS) {
             mResolver.registerContentObserver(
                     Settings.Secure.getUriFor(key), false, mObserver, UserHandle.USER_ALL);
+        }
+        for (String key : WATCHED_SYSTEM_KEYS) {
+            mResolver.registerContentObserver(
+                    Settings.System.getUriFor(key), false, mObserver, UserHandle.USER_ALL);
         }
 
         mReady = true;
@@ -101,8 +120,31 @@ public class AxSpoofManager implements IAxSpoofManager {
         }
     }
 
+    private void refreshSystemKey(String key) {
+        if (mResolver == null) return;
+        final String value = Settings.System.getStringForUser(
+                mResolver, key, UserHandle.USER_CURRENT);
+        if (value == null) {
+            mSystemCache.remove(key);
+        } else {
+            mSystemCache.put(key, value);
+        }
+    }
+
+    private static boolean isSystemKey(String key) {
+        for (String systemKey : WATCHED_SYSTEM_KEYS) {
+            if (systemKey.equals(key)) return true;
+        }
+        return false;
+    }
+
     private String getCached(String key) {
         return mCache.get(key);
+    }
+
+    private String getCachedSystem(String key, String defaultValue) {
+        final String value = mSystemCache.get(key);
+        return value == null ? defaultValue : value;
     }
 
     @Override
@@ -113,6 +155,16 @@ public class AxSpoofManager implements IAxSpoofManager {
     @Override
     public String getPifSpoofPhotos() {
         return getCached(Settings.Secure.SPOOF_PIF_PHOTOS);
+    }
+
+    @Override
+    public String getPifEnabled() {
+        return getCachedSystem(Settings.System.SPOOF_PIF_ENABLED, "1");
+    }
+
+    @Override
+    public String getTrickyStoreEnabled() {
+        return getCachedSystem(Settings.System.SPOOF_TRICKYSTORE_ENABLED, "1");
     }
 
     @Override
