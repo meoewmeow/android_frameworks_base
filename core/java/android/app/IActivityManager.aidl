@@ -78,6 +78,7 @@ import android.service.voice.IVoiceInteractionSession;
 import android.view.RemoteAnimationDefinition;
 import android.view.RemoteAnimationAdapter;
 import com.android.internal.app.IVoiceInteractor;
+import com.android.internal.dexopt.IAxUserStartDexoptStatusHandler;
 import com.android.internal.os.IResultReceiver;
 import com.android.internal.policy.IKeyguardDismissCallback;
 
@@ -1080,4 +1081,9 @@ interface IActivityManager {
     String getSpoofTrickyStoreKeyBox();
 
     String getSpoofTrickyStorePatch();
+
+    void connectUserDexopt(in IAxUserStartDexoptStatusHandler handler);
+    void disconnectUserDexopt();
+    List<String> getPackagesToBeOptimized();
+    void performUserDexopt();
 }
