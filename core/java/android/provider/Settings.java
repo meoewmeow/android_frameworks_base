@@ -22739,6 +22739,13 @@ public final class Settings {
         @Readable
         public static final String WINDOW_IGNORE_SECURE = "window_ignore_secure";
 
+        /**
+         * Whether screen capture and screen recording status should be hidden
+         * from applications.
+         * @hide
+         */
+        public static final String HIDE_SCREEN_CAPTURE_STATUS = "hide_screen_capture_status";
+
     }
 
     /**
