@@ -15079,6 +15079,13 @@ public final class Settings {
         public static final String SPOOF_TRICKYSTORE_PATCH = "spoof_trickystore_patch";
 
         /**
+         * Comma-separated list of packages whose app list entries are hidden
+         * from other apps' PackageManager queries.
+         * @hide
+         */
+        public static final String HIDE_APPLIST = "hide_applist";
+
+        /**
          * Comma-separated list of packages that cannot read ADB / developer
          * options status from Settings.
          * @hide

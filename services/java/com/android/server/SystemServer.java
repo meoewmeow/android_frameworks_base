@@ -2189,6 +2189,9 @@ public final class SystemServer implements Dumpable {
             mSystemServiceManager.startService(CustomDeviceConfigService.class);
             t.traceEnd();
 
+            // Donor: Infinity X frameworks_base@16-QPR1.
+            mSystemServiceManager.startService(HideAppListService.class);
+
             t.traceBegin("StartNetworkManagementService");
             try {
                 networkManagement = NetworkManagementService.create(context);

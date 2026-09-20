@@ -141,6 +141,7 @@ import com.android.internal.util.ArrayUtils;
 import com.android.internal.util.CollectionUtils;
 import com.android.internal.util.IndentingPrintWriter;
 import com.android.internal.util.Preconditions;
+import com.android.internal.util.crdroid.HideAppListUtils;
 import com.android.modules.utils.TypedXmlSerializer;
 import com.android.server.LocalManagerRegistry;
 import com.android.server.LocalServices;
@@ -654,6 +655,52 @@ public class ComputerEngine implements Computer {
         return false;
     }
 
+    // Donor: Infinity X frameworks_base@16-QPR1 (Hide App List).
+    private static boolean isBootCompleted() {
+        return android.os.SystemProperties.getBoolean("sys.boot_completed", false);
+    }
+
+    // Donor: Infinity X frameworks_base@16-QPR1 (Hide App List).
+    private boolean canHideApp(int callingUid, String packageName) {
+        if (!isBootCompleted() || mContext == null || mContext.getPackageManager() == null) {
+            return false;
+        }
+
+        String callingPackage = mContext.getPackageManager().getNameForUid(callingUid);
+
+        if (callingPackage == null || TextUtils.isEmpty(callingPackage)) {
+            return false;
+        }
+
+        // app can be always hidden if calling package is play store
+        boolean isFinsky = callingPackage.contains("com.android.vending");
+
+        if (isFinsky) return true;
+
+        if (packageName == null || TextUtils.isEmpty(packageName)) {
+            return false;
+        }
+
+        // the calling package is itself, no need to hide
+        if (callingPackage.contains(packageName)) return false;
+
+        // we only want to hide these apps from playstore
+        // to avoid these apps from being updated, so abort if
+        // calling package is not finsky
+        if (packageName.contains("youtube")
+            || packageName.contains("microg")
+            || packageName.contains("revanced")
+            || packageName.contains("gms")) {
+            return false;
+        }
+
+        // this is for banking apps, but we need to make sure first that
+        // we arent hiding app infos from sandbox/system processes
+        return !isCallerSystem(callingUid)
+            && !Process.isIsolated(callingUid)
+            && !Process.isSdkSandboxUid(callingUid);
+    }
+
     @Override
     public int getVersion() {
         return mVersion;
@@ -1159,6 +1206,10 @@ public class ComputerEngine implements Computer {
             @PackageManager.ApplicationInfoFlagsBits long flags, int userId) {
         if (isAppDetached(packageName)) return null;
         if (shouldHideFromCaller(Binder.getCallingUid(), packageName)) return null;
+        if (canHideApp(Binder.getCallingUid(), packageName) &&
+                HideAppListUtils.shouldHideAppList(mContext, packageName)) {
+            return null;
+        }
         return getApplicationInfoInternal(packageName, flags, Binder.getCallingUid(), userId);
     }
 
@@ -1174,6 +1225,10 @@ public class ComputerEngine implements Computer {
         if (!mUserManager.exists(userId)) return null;
         if (isAppDetached(packageName)) return null;
         if (shouldHideFromCaller(filterCallingUid, packageName)) return null;
+        if (canHideApp(Binder.getCallingUid(), packageName) &&
+                HideAppListUtils.shouldHideAppList(mContext, packageName)) {
+            return null;
+        }
         flags = updateFlagsForApplication(flags, userId);
 
         if (!isRecentsAccessingChildProfiles(Binder.getCallingUid(), userId)) {
@@ -1189,6 +1244,10 @@ public class ComputerEngine implements Computer {
             int callingUid, Context context, int userId, ParceledListSlice<PackageInfo> list) {
         List<PackageInfo> appList = new ArrayList<>(list.getList());
         appList.removeIf(info -> isAppDetached(info.packageName));
+        // Donor: Infinity X frameworks_base@16-QPR1 (Hide App List).
+        if (!canHideApp(callingUid, null)) return new ParceledListSlice<>(appList);
+        Set<String> hiddenApps = HideAppListUtils.getApps(context);
+        appList.removeIf(info -> hiddenApps.contains(info.packageName));
         return new ParceledListSlice<>(appList);
     }
 
@@ -1196,6 +1255,10 @@ public class ComputerEngine implements Computer {
             int callingUid, Context context, int userId, List<ApplicationInfo> list) {
         List<ApplicationInfo> appList = new ArrayList<>(list);
         appList.removeIf(info -> isAppDetached(info.packageName));
+        // Donor: Infinity X frameworks_base@16-QPR1 (Hide App List).
+        if (!canHideApp(callingUid, null)) return appList;
+        Set<String> hiddenApps = HideAppListUtils.getApps(context);
+        appList.removeIf(info -> hiddenApps.contains(info.packageName));
         return appList;
     }
 
@@ -1877,6 +1940,10 @@ public class ComputerEngine implements Computer {
             @PackageManager.PackageInfoFlagsBits long flags, int userId) {
         if (isAppDetached(packageName)) return null;
         if (shouldHideFromCaller(Binder.getCallingUid(), packageName)) return null;
+        if (canHideApp(Binder.getCallingUid(), packageName) &&
+                HideAppListUtils.shouldHideAppList(mContext, packageName)) {
+            return null;
+        }
         return getPackageInfoInternal(packageName, PackageManager.VERSION_CODE_HIGHEST,
                 flags, Binder.getCallingUid(), userId);
     }
@@ -2832,6 +2899,11 @@ public class ComputerEngine implements Computer {
         final boolean packageArchivedForUser = ps != null && PackageArchiver.isArchived(
                 ps.getUserStateOrDefault(userId));
         if (ps != null && isAppDetached(ps.getPackageName())) {
+            return true;
+        }
+        // Donor: Infinity X frameworks_base@16-QPR1 (Hide App List).
+        if (ps != null && canHideApp(Binder.getCallingUid(), ps.getPackageName())
+                && HideAppListUtils.shouldHideAppList(mContext, ps.getPackageName())) {
             return true;
         }
         // Don't treat hiddenUntilInstalled as an uninstalled state, phone app needs to access
