@@ -22732,6 +22732,13 @@ public final class Settings {
                     "wear_system_status_tray_configuration";
         }
 
+        /**
+         * Whether secure windows (FLAG_SECURE) should be ignored system-wide.
+         * @hide
+         */
+        @Readable
+        public static final String WINDOW_IGNORE_SECURE = "window_ignore_secure";
+
     }
 
     /**

@@ -52,6 +52,7 @@ import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.IBinder;
+import android.provider.Settings;
 import android.transition.Scene;
 import android.transition.Transition;
 import android.transition.TransitionManager;
@@ -1364,6 +1365,12 @@ public abstract class Window {
      * @see #clearFlags
      */
     public void setFlags(int flags, int mask) {
+        // Donor: Evolution X frameworks_base@bka (Settings.Global.WINDOW_IGNORE_SECURE).
+        if ((mask & WindowManager.LayoutParams.FLAG_SECURE) != 0
+                && Settings.Global.getInt(mContext.getContentResolver(),
+                        Settings.Global.WINDOW_IGNORE_SECURE, 0) == 1) {
+            mask &= ~WindowManager.LayoutParams.FLAG_SECURE;
+        }
         final WindowManager.LayoutParams attrs = getAttributes();
         attrs.flags = (attrs.flags&~mask) | (flags&mask);
         mForcedWindowFlags |= mask;
