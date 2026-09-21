@@ -53,10 +53,14 @@ public class HideAppListService extends SystemService {
     @Override
     public void onBootPhase(int phase) {
         if (phase == SystemService.PHASE_BOOT_COMPLETED) {
-            IntentFilter filter = new IntentFilter();
-            filter.addAction(Intent.ACTION_PACKAGE_FULLY_REMOVED);
-            filter.addDataScheme("package");
-            mContext.registerReceiver(new PackageUninstallReceiver(), filter);
+            try {
+                IntentFilter filter = new IntentFilter();
+                filter.addAction(Intent.ACTION_PACKAGE_FULLY_REMOVED);
+                filter.addDataScheme("package");
+                mContext.registerReceiver(new PackageUninstallReceiver(), filter);
+            } catch (Throwable t) {
+                Slog.w(TAG, "Failed to register uninstall receiver", t);
+            }
         }
     }
 

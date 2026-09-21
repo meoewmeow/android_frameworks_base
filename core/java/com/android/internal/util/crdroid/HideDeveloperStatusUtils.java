@@ -19,7 +19,9 @@ package com.android.internal.util.crdroid;
 
 import android.content.ContentResolver;
 import android.content.Context;
-import android.os.UserHandle;
+import android.database.ContentObserver;
+import android.net.Uri;
+import android.os.SystemProperties;
 import android.provider.Settings;
 
 import java.util.Arrays;
@@ -30,8 +32,13 @@ import java.util.Set;
  * Hides ADB / developer options status from packages selected by the user.
  *
  * <p>Adapted from Infinity X (frameworks_base@16-QPR1,
- * com.android.internal.util.infinity.HideDeveloperStatusUtils). Only the package
- * name was changed to the crDroid util namespace.
+ * com.android.internal.util.infinity.HideDeveloperStatusUtils).
+ *
+ * <p>crDroid adaptation: this is called from Settings.System/Secure/Global.getInt()
+ * for every settings read in the system, so it must stay allocation- and I/O-free
+ * for unrelated keys. The watched key is checked first, nothing runs before
+ * boot completes, and the package list is cached and refreshed through a content
+ * observer instead of reading the provider on every call.
  */
 public class HideDeveloperStatusUtils {
     private static final Set<String> settingsToHide =
@@ -41,6 +48,12 @@ public class HideDeveloperStatusUtils {
                 Settings.Global.ADB_WIFI_ENABLED,
                 Settings.Global.DEVELOPMENT_SETTINGS_ENABLED
             ));
+
+    private static final Object sCacheLock = new Object();
+
+    /** Cached hidden-package set; null means "read it again from the provider". */
+    private static volatile Set<String> sCachedApps = null;
+    private static volatile boolean sObserverRegistered = false;
 
     enum Action {
         ADD,
@@ -54,12 +67,63 @@ public class HideDeveloperStatusUtils {
             return false;
         }
 
-        Set<String> apps = getApps(cr);
-        if (apps.isEmpty()) {
+        // Cheap reject for every settings read that this feature does not care
+        // about. Must stay the first check: this method is called from
+        // Settings.*.getInt() all over the system, including during boot.
+        if (!settingsToHide.contains(name)) {
             return false;
         }
 
-        return apps.contains(packageName) && settingsToHide.contains(name);
+        // The list can only be configured through the Settings UI, which cannot
+        // exist before boot completes.
+        if (!SystemProperties.getBoolean("sys.boot_completed", false)) {
+            return false;
+        }
+
+        try {
+            Set<String> apps = getAppsCached(cr);
+            return !apps.isEmpty() && apps.contains(packageName);
+        } catch (Throwable t) {
+            // Never break a settings read because of this feature.
+            return false;
+        }
+    }
+
+    private static Set<String> getAppsCached(ContentResolver cr) {
+        Set<String> cached = sCachedApps;
+        if (cached != null) {
+            return cached;
+        }
+
+        synchronized (sCacheLock) {
+            cached = sCachedApps;
+            if (cached == null) {
+                cached = getApps(cr);
+                sCachedApps = cached;
+                registerObserverLocked(cr);
+            }
+            return cached;
+        }
+    }
+
+    private static void registerObserverLocked(ContentResolver cr) {
+        if (sObserverRegistered) {
+            return;
+        }
+        try {
+            cr.registerContentObserver(
+                    Settings.Secure.getUriFor(Settings.Secure.HIDE_DEVELOPER_STATUS),
+                    false,
+                    new ContentObserver(null) {
+                        @Override
+                        public void onChange(boolean selfChange, Uri uri) {
+                            sCachedApps = null;
+                        }
+                    });
+            sObserverRegistered = true;
+        } catch (Throwable t) {
+            // Caching simply stays for the lifetime of the process.
+        }
     }
 
     private static Set<String> getApps(Context context) {
@@ -105,6 +169,7 @@ public class HideDeveloperStatusUtils {
 
         Settings.Secure.putStringForUser(context.getContentResolver(),
                 Settings.Secure.HIDE_DEVELOPER_STATUS, String.join(",", apps), userId);
+        sCachedApps = null;
     }
 
     public void addApp(Context mContext, String packageName, int userId) {
