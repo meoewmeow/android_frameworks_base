@@ -840,6 +840,8 @@ public class WindowManagerService extends IWindowManager.Stub
                 Settings.Secure.getUriFor(Settings.Secure.DISABLE_SECURE_WINDOWS);
         private final Uri mWindowIgnoreSecureUri =
                 Settings.Global.getUriFor(Settings.Global.WINDOW_IGNORE_SECURE);
+        private final Uri mHideScreenCaptureStatusUri =
+                Settings.Global.getUriFor(Settings.Global.HIDE_SCREEN_CAPTURE_STATUS);
         private final Uri mMagnifyImeEnabledUri = Settings.Secure.getUriFor(
                 Settings.Secure.ACCESSIBILITY_MAGNIFICATION_MAGNIFY_NAV_AND_IME);
         private final Uri mPolicyControlUri =
@@ -875,6 +877,8 @@ public class WindowManagerService extends IWindowManager.Stub
             resolver.registerContentObserver(mDisableSecureWindowsUri, false, this,
                     UserHandle.USER_ALL);
             resolver.registerContentObserver(mWindowIgnoreSecureUri, false, this,
+                    UserHandle.USER_ALL);
+            resolver.registerContentObserver(mHideScreenCaptureStatusUri, false, this,
                     UserHandle.USER_ALL);
             if (com.android.server.accessibility.Flags.enableMagnificationMagnifyNavBarAndIme()) {
                 resolver.registerContentObserver(mMagnifyImeEnabledUri, false, this,
@@ -946,6 +950,11 @@ public class WindowManagerService extends IWindowManager.Stub
                 return;
             }
 
+            if (mHideScreenCaptureStatusUri.equals(uri)) {
+                updateHideScreenCaptureStatus();
+                return;
+            }
+
             if (mMagnifyImeEnabledUri.equals(uri)) {
                 updateMagnifyIme();
             }
@@ -974,6 +983,7 @@ public class WindowManagerService extends IWindowManager.Stub
         void loadSettings() {
             updateMaximumObscuringOpacityForTouch();
             updateDisableSecureWindows();
+            updateHideScreenCaptureStatus();
             updateMagnifyIme();
         }
 
@@ -1085,6 +1095,11 @@ public class WindowManagerService extends IWindowManager.Stub
                 mIgnoreSecureWindows = ignoreSecureWindows;
                 mRoot.refreshSecureSurfaceState();
             }
+        }
+
+        void updateHideScreenCaptureStatus() {
+            mHideScreenCaptureStatus = Settings.Global.getInt(mContext.getContentResolver(),
+                    Settings.Global.HIDE_SCREEN_CAPTURE_STATUS, 0) != 0;
         }
 
         void updateMagnifyIme() {
@@ -1265,6 +1280,11 @@ public class WindowManagerService extends IWindowManager.Stub
 
     // Donor: Evolution X frameworks_base@bka (Settings.Global.WINDOW_IGNORE_SECURE).
     private volatile boolean mIgnoreSecureWindows = false;
+
+    // Donor: Evolution X frameworks_base@bka (Settings.Global.HIDE_SCREEN_CAPTURE_STATUS).
+    // Cached so shouldHideScreenCapture() never touches the ContentResolver from
+    // inside mGlobalLock.
+    private volatile boolean mHideScreenCaptureStatus = false;
 
     /** Creates an instance of the WindowManagerService for the system server. */
     public static WindowManagerService main(@NonNull final Context context,
@@ -10919,10 +10939,10 @@ public class WindowManagerService extends IWindowManager.Stub
     @EnforcePermission(android.Manifest.permission.DETECT_SCREEN_RECORDING)
     @Override
     public boolean registerScreenRecordingCallback(IScreenRecordingCallback callback) {
+        registerScreenRecordingCallback_enforcePermission();
         if (shouldHideScreenCapture()) {
             return false;
         }
-        registerScreenRecordingCallback_enforcePermission();
         return mScreenRecordingCallbackController.register(callback);
     }
 
@@ -10956,9 +10976,9 @@ public class WindowManagerService extends IWindowManager.Stub
     }
 
     // Donor: Evolution X frameworks_base@bka (Settings.Global.HIDE_SCREEN_CAPTURE_STATUS).
+    // Returns the value cached by SettingsObserver; callers may hold mGlobalLock.
     private boolean shouldHideScreenCapture() {
-        return Settings.Global.getInt(mContext.getContentResolver(),
-                Settings.Global.HIDE_SCREEN_CAPTURE_STATUS, 0) != 0;
+        return mHideScreenCaptureStatus;
     }
 
     /**

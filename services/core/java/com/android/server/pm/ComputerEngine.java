@@ -662,11 +662,17 @@ public class ComputerEngine implements Computer {
 
     // Donor: Infinity X frameworks_base@16-QPR1 (Hide App List).
     private boolean canHideApp(int callingUid, String packageName) {
-        if (!isBootCompleted() || mContext == null || mContext.getPackageManager() == null) {
+        if (!isBootCompleted() || mContext == null) {
             return false;
         }
 
-        String callingPackage = mContext.getPackageManager().getNameForUid(callingUid);
+        // Resolve the caller through AMS rather than PackageManager: this code
+        // runs inside PMS query paths, and getNameForUid() would re-enter PMS.
+        final ActivityManagerInternal ami = getAmInternal();
+        if (ami == null) {
+            return false;
+        }
+        String callingPackage = ami.getPackageNameByPid(Binder.getCallingPid());
 
         if (callingPackage == null || TextUtils.isEmpty(callingPackage)) {
             return false;
