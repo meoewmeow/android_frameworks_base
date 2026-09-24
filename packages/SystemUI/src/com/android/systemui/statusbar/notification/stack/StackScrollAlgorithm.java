@@ -85,6 +85,9 @@ public class StackScrollAlgorithm {
     private float mSmallCornerRadius;
     private float mLargeCornerRadius;
     private int mHeadsUpCyclingPadding;
+    private int mLockscreenStackPeek;
+    private boolean mLockscreenBottomStack;
+    private float mLockscreenBottomStackBottom;
 
     public StackScrollAlgorithm(
             Context context,
@@ -127,7 +130,14 @@ public class StackScrollAlgorithm {
         mQuickQsOffsetHeight = SystemBarUtils.getQuickQsOffsetHeight(context);
         mSmallCornerRadius = res.getDimension(R.dimen.notification_corner_radius_small);
         mLargeCornerRadius = res.getDimension(R.dimen.notification_corner_radius);
+        mLockscreenStackPeek = res.getDimensionPixelSize(
+                R.dimen.keyguard_notification_stack_peek);
         mHeadsUpAnimator.updateResources(context);
+    }
+
+    public void setLockscreenBottomStack(boolean collapsed, float bottom) {
+        mLockscreenBottomStack = collapsed;
+        mLockscreenBottomStackBottom = bottom;
     }
 
     /**
@@ -151,7 +161,73 @@ public class StackScrollAlgorithm {
         updateSpeedBumpState(algorithmState, speedBumpIndex);
         updateShelfState(algorithmState, ambientState);
         updateAlphaState(algorithmState, ambientState);
+        updateLockscreenBottomStack(algorithmState, ambientState);
         getNotificationChildrenStates(algorithmState);
+    }
+
+    private void updateLockscreenBottomStack(StackScrollAlgorithmState algorithmState,
+            AmbientState ambientState) {
+        if (!mLockscreenBottomStack || !ambientState.isOnKeyguard()
+                || ambientState.getDozeAmount() != 0f
+                || ambientState.getFractionToShade() != 0f
+                || ambientState.isExpansionChanging()
+                || mHostView.getHeight() <= 0
+                || mLockscreenBottomStackBottom <= 0f) {
+            return;
+        }
+
+        ExpandableNotificationRow first = null;
+        ExpandableNotificationRow second = null;
+        int count = 0;
+        for (ExpandableView child : algorithmState.visibleChildren) {
+            if (child instanceof ExpandableNotificationRow row && !row.isHeadsUpState()) {
+                count++;
+                if (first == null) {
+                    first = row;
+                } else if (second == null) {
+                    second = row;
+                } else {
+                    child.getViewState().hidden = true;
+                    child.getViewState().setAlpha(0f);
+                }
+            }
+        }
+        if (first == null) return;
+
+        float bottom = Math.min(mLockscreenBottomStackBottom, mHostView.getHeight());
+        NotificationShelf shelf = ambientState.getShelf();
+        if (shelf != null && count > 2) {
+            ExpandableViewState shelfState = shelf.getViewState();
+            shelfState.hidden = false;
+            shelfState.setAlpha(1f);
+            shelfState.setYTranslation(bottom - shelfState.height);
+            bottom -= shelfState.height;
+        } else if (shelf != null) {
+            shelf.getViewState().hidden = true;
+        }
+
+        ExpandableViewState firstState = first.getViewState();
+        int peek = second == null ? 0 : Math.min(mLockscreenStackPeek,
+                second.getViewState().height);
+        float firstTop = Math.max(ambientState.getStackY(), bottom - firstState.height - peek);
+        firstState.setYTranslation(firstTop);
+        firstState.setZTranslation(ambientState.getBaseZHeight() + mPinnedZTranslationExtra);
+        firstState.clipTopAmount = 0;
+        firstState.hidden = false;
+        firstState.inShelf = false;
+        firstState.setAlpha(1f);
+        firstState.location = ExpandableViewState.LOCATION_MAIN_AREA;
+
+        if (second != null) {
+            ExpandableViewState secondState = second.getViewState();
+            secondState.setYTranslation(bottom - secondState.height);
+            secondState.clipTopAmount = Math.max(0, secondState.height - peek);
+            secondState.setZTranslation(ambientState.getBaseZHeight());
+            secondState.hidden = false;
+            secondState.inShelf = false;
+            secondState.setAlpha(1f);
+            secondState.location = ExpandableViewState.LOCATION_BOTTOM_STACK_PEEKING;
+        }
     }
 
     private static boolean isEmptyShadeView(ExpandableView v) {

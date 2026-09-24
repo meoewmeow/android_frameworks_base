@@ -252,6 +252,7 @@ public final class NotificationPanelViewController implements
     public static final String TAG = NotificationPanelView.class.getSimpleName();
     private static final boolean DEBUG_LOGCAT = Log.isLoggable(TAG, Log.DEBUG);
     private static final boolean DEBUG_DRAWABLE = false;
+    private static final float LOCKSCREEN_UNLOCK_SWIPE_ZONE_DP = 96f;
     /** The parallax amount of the quick settings translation when dragging down the panel. */
     public static final float QS_PARALLAX_AMOUNT = 0.175f;
     private static final int NO_FIXED_DURATION = -1;
@@ -400,6 +401,7 @@ public final class NotificationPanelViewController implements
     private float mOverStretchAmount;
     private float mDownX;
     private float mDownY;
+    private boolean mLockscreenUnlockSwipeAllowed = true;
     private int mDisplayTopInset = 0; // in pixels
     private int mDisplayRightInset = 0; // in pixels
     private int mDisplayLeftInset = 0; // in pixels
@@ -1606,6 +1608,7 @@ public final class NotificationPanelViewController implements
             mDozingOnDown = mDozing;
             mDownX = event.getX();
             mDownY = event.getY();
+            mLockscreenUnlockSwipeAllowed = isLockscreenUnlockSwipeAllowed(mDownX, mDownY);
             mCollapsedOnDown = isFullyCollapsed();
             mQsController.setCollapsedOnDown(mCollapsedOnDown);
             mIsPanelCollapseOnQQS = mQsController.canPanelCollapseOnQQS(mDownX, mDownY);
@@ -1631,6 +1634,22 @@ public final class NotificationPanelViewController implements
             // not down event at all.
             mLastEventSynthesizedDown = false;
         }
+    }
+
+    private boolean isLockscreenUnlockSwipeAllowed(float downX, float downY) {
+        if (mBarState != KEYGUARD || mQsController.getExpanded() || mDozing) {
+            return true;
+        }
+
+        float unlockZoneHeight = TypedValue.applyDimension(
+                TypedValue.COMPLEX_UNIT_DIP,
+                LOCKSCREEN_UNLOCK_SWIPE_ZONE_DP,
+                mView.getResources().getDisplayMetrics());
+        float unlockZoneTop = mView.getHeight() - mNavigationBarBottomHeight - unlockZoneHeight;
+        return downY >= unlockZoneTop
+                && downX >= mView.getWidth() * 0.3f
+                && downX <= mView.getWidth() * 0.7f
+                && !isInContentBounds(downX, downY);
     }
 
     boolean flingExpandsQs(float vel) {
@@ -4123,6 +4142,9 @@ public final class NotificationPanelViewController implements
                             || openShadeWithoutHun) {
                         float hAbs = Math.abs(h);
                         float touchSlop = getTouchSlop(event);
+                        if (h < -touchSlop && !mLockscreenUnlockSwipeAllowed) {
+                            break;
+                        }
                         if ((h < -touchSlop
                                 || ((openShadeWithoutHun || mAnimatingOnDown) && hAbs > touchSlop))
                                 && hAbs > Math.abs(x - mInitialExpandX)) {

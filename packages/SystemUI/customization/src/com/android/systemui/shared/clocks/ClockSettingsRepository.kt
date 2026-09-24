@@ -48,6 +48,9 @@ object ClockSettingsRepository {
     const val SETTING_OPLUS_BIG_DUAL_TONE = "ax_clock_oplus_big_dual_tone"
     const val SETTING_OPLUS_GRAFFITI_FACE = "ax_clock_oplus_graffiti_face"
     const val SETTING_OPLUS_GRAFFITI_ANGLE = "ax_clock_oplus_graffiti_angle"
+    const val SETTING_CLOCK_BACKGROUND_BLUR_ENABLED = "ax_clock_background_blur_enabled"
+    const val SETTING_CLOCK_BACKGROUND_BLUR_RADIUS = "ax_clock_background_blur_radius"
+    const val SETTING_CLOCK_BACKGROUND_TRANSPARENCY = "ax_clock_background_transparency"
 
     const val COLOR_AUTO = "auto"
     const val OPLUS_CLASSIC_FACE_DEFAULT = "default"
@@ -142,6 +145,12 @@ object ClockSettingsRepository {
         Settings.Secure.getUriFor(SETTING_OPLUS_GRAFFITI_FACE)
     @JvmField val oplusGraffitiAngleSettingUri: Uri =
         Settings.Secure.getUriFor(SETTING_OPLUS_GRAFFITI_ANGLE)
+    @JvmField val clockBackgroundBlurEnabledUri =
+        Settings.Secure.getUriFor(SETTING_CLOCK_BACKGROUND_BLUR_ENABLED)
+    @JvmField val clockBackgroundBlurRadiusUri =
+        Settings.Secure.getUriFor(SETTING_CLOCK_BACKGROUND_BLUR_RADIUS)
+    @JvmField val clockBackgroundTransparencyUri =
+        Settings.Secure.getUriFor(SETTING_CLOCK_BACKGROUND_TRANSPARENCY)
 
     private fun layoutSettingUris(baseSetting: String): List<Uri> {
         return DisplayUtils.DisplayLayout.values().map {
@@ -197,6 +206,16 @@ object ClockSettingsRepository {
 
     private val _oplusGraffitiAngle = MutableStateFlow(OPLUS_GRAFFITI_ANGLE_CENTER)
     val oplusGraffitiAngle: StateFlow<String> = _oplusGraffitiAngle.asStateFlow()
+
+    private val _clockBackgroundBlurEnabled = MutableStateFlow(true)
+    val clockBackgroundBlurEnabled: StateFlow<Boolean> = _clockBackgroundBlurEnabled.asStateFlow()
+
+    private val _clockBackgroundBlurRadius = MutableStateFlow(55)
+    val clockBackgroundBlurRadius: StateFlow<Int> = _clockBackgroundBlurRadius.asStateFlow()
+
+    private val _clockBackgroundTransparency = MutableStateFlow(45)
+    val clockBackgroundTransparency: StateFlow<Int> =
+        _clockBackgroundTransparency.asStateFlow()
 
     private val _shouldCenterIcons = MutableStateFlow(true)
     val shouldCenterIcons: StateFlow<Boolean> = _shouldCenterIcons.asStateFlow()
@@ -269,6 +288,15 @@ object ClockSettingsRepository {
                 oplusGraffitiAngleSettingUri -> {
                     _oplusGraffitiAngle.value = readOplusGraffitiAngle(cr)
                 }
+                clockBackgroundBlurEnabledUri -> {
+                    _clockBackgroundBlurEnabled.value = readClockBackgroundBlurEnabled(cr)
+                }
+                clockBackgroundBlurRadiusUri -> {
+                    _clockBackgroundBlurRadius.value = readClockBackgroundBlurRadius(cr)
+                }
+                clockBackgroundTransparencyUri -> {
+                    _clockBackgroundTransparency.value = readClockBackgroundTransparency(cr)
+                }
             }
             _clockEditGeometryVersion.value++
         }
@@ -304,6 +332,9 @@ object ClockSettingsRepository {
         cr.registerContentObserver(oplusBigDualToneUri, false, observer)
         cr.registerContentObserver(oplusGraffitiFaceSettingUri, false, observer)
         cr.registerContentObserver(oplusGraffitiAngleSettingUri, false, observer)
+        cr.registerContentObserver(clockBackgroundBlurEnabledUri, false, observer)
+        cr.registerContentObserver(clockBackgroundBlurRadiusUri, false, observer)
+        cr.registerContentObserver(clockBackgroundTransparencyUri, false, observer)
         stableContext.registerComponentCallbacks(componentCallbacks)
 
         readAll(cr)
@@ -324,6 +355,9 @@ object ClockSettingsRepository {
         _oplusBigDualTone.value = readOplusBigDualTone(cr)
         _oplusGraffitiFace.value = readOplusGraffitiFace(cr)
         _oplusGraffitiAngle.value = readOplusGraffitiAngle(cr)
+        _clockBackgroundBlurEnabled.value = readClockBackgroundBlurEnabled(cr)
+        _clockBackgroundBlurRadius.value = readClockBackgroundBlurRadius(cr)
+        _clockBackgroundTransparency.value = readClockBackgroundTransparency(cr)
         updateClockLayoutAlignment()
         _clockEditGeometryVersion.value++
     }
@@ -409,6 +443,15 @@ object ClockSettingsRepository {
             "DEFAULT"
         }
     }
+
+    private fun readClockBackgroundBlurEnabled(cr: ContentResolver): Boolean =
+        Settings.Secure.getInt(cr, SETTING_CLOCK_BACKGROUND_BLUR_ENABLED, 1) == 1
+
+    private fun readClockBackgroundBlurRadius(cr: ContentResolver): Int =
+        Settings.Secure.getInt(cr, SETTING_CLOCK_BACKGROUND_BLUR_RADIUS, 55).coerceIn(0, 100)
+
+    private fun readClockBackgroundTransparency(cr: ContentResolver): Int =
+        Settings.Secure.getInt(cr, SETTING_CLOCK_BACKGROUND_TRANSPARENCY, 45).coerceIn(0, 100)
 
     private fun readSizeScale(cr: ContentResolver): Float {
         val rawScale = readLayoutFloat(cr, SETTING_SIZE_SCALE)

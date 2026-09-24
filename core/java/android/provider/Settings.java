@@ -11547,6 +11547,29 @@ public final class Settings {
                 "doze_always_on_wallpaper_enabled";
 
         /**
+         * Whether the ambient (AOD) wallpaper is blurred.
+         * <p>
+         * When 0 the wallpaper stays sharp on AOD while every other blur surface
+         * (shade, QS, bouncer, transitions) keeps behaving normally.
+         * <p>
+         * Type: int (0 for false, 1 for true)
+         *
+         * @hide
+         */
+        public static final String DOZE_WALLPAPER_BLUR_ENABLED =
+                "doze_wallpaper_blur_enabled";
+
+        /**
+         * Whether themed (monochrome) launcher icons paint a blurred slice of the wallpaper as
+         * their background instead of a flat themed colour.
+         *
+         * 0 = flat colour (default), 1 = blurred wallpaper.
+         * @hide
+         */
+        public static final String THEMED_ICON_BLUR_ENABLED =
+                "themed_icon_blur_enabled";
+
+        /**
          * Whether the device should pulse on pick up gesture.
          * @hide
          */

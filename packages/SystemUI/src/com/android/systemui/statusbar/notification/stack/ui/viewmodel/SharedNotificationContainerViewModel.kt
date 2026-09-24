@@ -965,13 +965,12 @@ constructor(
     }
 
     /**
-     * Wallpaper focal area needs the absolute bottom of notification stack to avoid occlusion. It
-     * should not change with notifications in shade.
+     * Wallpaper focal area needs the absolute bottom of the keyguard notification area to avoid
+     * occlusion. The collapsed stack is anchored at this bottom edge.
      *
      * @param calculateMaxNotifications is required by getMaxNotifications as calculateSpace by
      *   calling computeMaxKeyguardNotifications in NotificationStackSizeCalculator
-     * @param calculateHeight is calling computeHeight in NotificationStackSizeCalculator The edge
-     *   case is that when maxNotifications is 0, we won't take shelfHeight into account
+     * @param calculateHeight measures the unchanged split-shade stack
      */
     fun getNotificationStackAbsoluteBottomOnLockscreen(
         calculateMaxNotifications: (Float, Boolean) -> Int,
@@ -988,13 +987,14 @@ constructor(
                 if ((hasNotifications || hasActiveMedia) && isOnLockscreen) {
                     combine(
                             getMaxNotifications(calculateMaxNotifications),
-                            bounds.map { it.top },
+                            bounds,
                             isOnLockscreenWithoutShade,
                             interactor.notificationStackChanged,
-                        ) { maxNotifications, top, isOnLockscreenWithoutShade, _ ->
+                            interactor.configurationBasedDimensions.map { it.useSplitShade },
+                        ) { maxNotifications, bounds, isOnLockscreenWithoutShade, _, splitShade ->
                             if (isOnLockscreenWithoutShade && maxNotifications != -1) {
-                                val height = calculateHeight(maxNotifications)
-                                top + height
+                                if (splitShade) bounds.top + calculateHeight(maxNotifications)
+                                else bounds.bottom
                             } else {
                                 null
                             }

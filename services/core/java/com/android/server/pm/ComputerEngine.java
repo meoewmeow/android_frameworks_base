@@ -678,10 +678,22 @@ public class ComputerEngine implements Computer {
             return false;
         }
 
-        // app can be always hidden if calling package is play store
+        // Play Store and Play Services serve the Play Integrity API: to answer an
+        // integrity request they must be able to look up the app that asked. Hiding
+        // hide_applist entries from them made every listed app fail integrity with
+        // INTERNAL_ERROR (-100), "signature is null". From these callers, hide only
+        // the update-avoidance set below, never the user's privacy list.
         boolean isFinsky = callingPackage.contains("com.android.vending");
+        boolean isGms = callingPackage.startsWith("com.google.android.gms");
 
-        if (isFinsky) return true;
+        if (isFinsky || isGms) {
+            // packageName == null is the whole-list path (getInstalledPackages):
+            // keep hiding the list there so the Play Store can't auto-update
+            // modded apps. Single-package lookups (what integrity uses) only hide
+            // the update-avoidance set.
+            if (packageName == null) return isFinsky;
+            return packageName.contains("youtube") || packageName.contains("revanced");
+        }
 
         if (packageName == null || TextUtils.isEmpty(packageName)) {
             return false;

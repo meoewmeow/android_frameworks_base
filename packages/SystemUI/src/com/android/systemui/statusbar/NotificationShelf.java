@@ -31,6 +31,7 @@ import android.util.MathUtils;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.ViewTreeObserver;
+import android.widget.TextView;
 import android.view.accessibility.AccessibilityNodeInfo;
 import android.view.accessibility.AccessibilityNodeInfo.AccessibilityAction;
 import android.view.animation.Interpolator;
@@ -85,6 +86,8 @@ public class NotificationShelf extends ActivatableNotificationView {
 
     @VisibleForTesting
     public NotificationShelfIconContainer mShelfIcons;
+    private TextView mBottomStackMore;
+    private int mBottomStackMoreCount;
     // This field hides mBackgroundNormal from super class for short-shelf alignment
     @VisibleForTesting
     public NotificationShelfBackgroundView mBackgroundNormal;
@@ -125,8 +128,10 @@ public class NotificationShelf extends ActivatableNotificationView {
     public void onFinishInflate() {
         super.onFinishInflate();
         mShelfIcons = findViewById(R.id.content);
+        mBottomStackMore = findViewById(R.id.keyguard_bottom_stack_more);
         mShelfIcons.setClipChildren(false);
         mShelfIcons.setClipToPadding(false);
+        updateBottomStackMore();
 
         mBackgroundNormal = (NotificationShelfBackgroundView) super.mBackgroundNormal;
 
@@ -136,6 +141,33 @@ public class NotificationShelf extends ActivatableNotificationView {
         mShelfIcons.setIsStaticLayout(false);
         requestRoundness(/* top = */ 1f, /* bottom = */ 1f, BASE_VALUE, /* animate = */ false);
         updateResources();
+    }
+
+    public void setBottomStackMoreCount(int count) {
+        if (mBottomStackMoreCount == count) return;
+        mBottomStackMoreCount = count;
+        updateBottomStackMore();
+    }
+
+    private void updateBottomStackMore() {
+        if (mBottomStackMore == null || mShelfIcons == null) return;
+        if (mBottomStackMoreCount > 0) {
+            mBottomStackMore.setText(mBottomStackMoreCount == 1
+                    ? getResources().getString(R.string.keyguard_bottom_stack_one_more)
+                    : getResources().getString(R.string.keyguard_bottom_stack_more,
+                            mBottomStackMoreCount));
+            mBottomStackMore.setVisibility(View.VISIBLE);
+            mShelfIcons.setVisibility(View.INVISIBLE);
+        } else {
+            mBottomStackMore.setVisibility(View.GONE);
+            mShelfIcons.setVisibility(View.VISIBLE);
+        }
+    }
+
+    public boolean expandBottomStackIfShowingMore() {
+        if (mBottomStackMoreCount <= 0 || mHostLayout == null) return false;
+        mHostLayout.expandLockscreenBottomStack();
+        return true;
     }
 
     public void bind(AmbientState ambientState, NotificationStackScrollLayout hostLayout,

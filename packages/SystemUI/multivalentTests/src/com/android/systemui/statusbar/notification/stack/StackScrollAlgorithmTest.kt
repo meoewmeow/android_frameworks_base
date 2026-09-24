@@ -483,6 +483,46 @@ class StackScrollAlgorithmTest(flags: FlagsParameterization) : SysuiTestCase() {
     }
 
     @Test
+    @DisableSceneContainer
+    fun bottomStack_oneNotificationAnchorsAtBottom() {
+        hostView.layout(0, 0, 400, 1000)
+        ambientState.statusBarState = StatusBarState.KEYGUARD
+        ambientState.stackY = 100f
+        ambientState.stackEndHeight = 600f
+        ambientState.interpolatedStackHeight = 600f
+        whenever(notificationRow.intrinsicHeight).thenReturn(100)
+        stackScrollAlgorithm.setLockscreenBottomStack(true, 800f)
+
+        stackScrollAlgorithm.resetViewStates(ambientState, 0)
+
+        assertThat(notificationRow.viewState.yTranslation).isEqualTo(700f)
+        assertThat(notificationRow.viewState.clipTopAmount).isEqualTo(0)
+    }
+
+    @Test
+    @DisableSceneContainer
+    fun bottomStack_twoNotificationsOverlapWithOnlySecondPeeking() {
+        val second = mock<ExpandableNotificationRow>()
+        whenever(second.viewState).thenReturn(ExpandableViewState())
+        whenever(second.intrinsicHeight).thenReturn(100)
+        hostView.addView(second)
+        hostView.layout(0, 0, 400, 1000)
+        ambientState.statusBarState = StatusBarState.KEYGUARD
+        ambientState.stackY = 100f
+        ambientState.stackEndHeight = 600f
+        ambientState.interpolatedStackHeight = 600f
+        whenever(notificationRow.intrinsicHeight).thenReturn(100)
+        stackScrollAlgorithm.setLockscreenBottomStack(true, 800f)
+
+        stackScrollAlgorithm.resetViewStates(ambientState, 0)
+
+        val peek = px(R.dimen.keyguard_notification_stack_peek)
+        assertThat(notificationRow.viewState.yTranslation).isEqualTo(700f - peek)
+        assertThat(second.viewState.yTranslation).isEqualTo(700f)
+        assertThat(second.viewState.clipTopAmount).isEqualTo((100f - peek).toInt())
+    }
+
+    @Test
     @EnableSceneContainer
     fun resetViewStates_defaultHun_yTranslationIsHeadsUpTop() {
         val headsUpTop = 200f

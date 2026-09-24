@@ -1220,6 +1220,28 @@ public class NotificationStackScrollLayoutTest extends SysuiTestCase {
 
     @Test
     @DisableSceneContainer
+    public void bottomStack_limitsNotificationsAndExpandsFullList() {
+        when(mStackSizeCalculator.computeHeight(eq(mStackScroller), eq(2), anyFloat(), any()))
+                .thenReturn(200f);
+        when(mStackSizeCalculator.computeHeight(eq(mStackScroller), eq(-1), anyFloat(), any()))
+                .thenReturn(600f);
+        mStackScroller.setLockscreenBottomStackBounds(100f, 800f, true, false);
+        clearInvocations(mStackSizeCalculator);
+
+        mStackScroller.setMaxDisplayedNotifications(5);
+        verify(mStackSizeCalculator).computeHeight(
+                eq(mStackScroller), eq(2), anyFloat(), eq("updateContentHeight"));
+        assertThat(mStackScroller.getTopPadding()).isEqualTo(600);
+
+        clearInvocations(mStackSizeCalculator);
+        mStackScroller.expandLockscreenBottomStack();
+        verify(mStackSizeCalculator).computeHeight(
+                eq(mStackScroller), eq(-1), anyFloat(), eq("updateContentHeight"));
+        assertThat(mStackScroller.getTopPadding()).isEqualTo(100);
+    }
+
+    @Test
+    @DisableSceneContainer
     public void testDispatchTouchEvent_sceneContainerDisabled() {
         MotionEvent event = MotionEvent.obtain(
                 SystemClock.uptimeMillis(),

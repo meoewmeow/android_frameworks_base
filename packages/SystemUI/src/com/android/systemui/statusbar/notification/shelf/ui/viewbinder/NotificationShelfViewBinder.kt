@@ -58,7 +58,9 @@ object NotificationShelfViewBinder {
         viewModel: NotificationShelfViewModel,
     ) {
         try {
-            shelf.setOnClickListener { viewModel.onShelfClicked() }
+            shelf.setOnClickListener {
+                if (!shelf.expandBottomStackIfShowingMore()) viewModel.onShelfClicked()
+            }
             awaitCancellation()
         } finally {
             shelf.setOnClickListener(null)

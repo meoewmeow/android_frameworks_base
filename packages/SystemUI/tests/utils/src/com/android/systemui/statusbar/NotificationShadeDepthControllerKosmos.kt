@@ -55,6 +55,7 @@ var Kosmos.notificationShadeDepthController by Fixture {
             focusedDisplayRepository = fakeFocusedDisplayRepository,
             applicationScope = applicationCoroutineScope,
             desktopMode = Optional.empty(),
+            tunerService = mock(),
             dumpManager = dumpManager,
         )
         .apply { root = mock<View>() }

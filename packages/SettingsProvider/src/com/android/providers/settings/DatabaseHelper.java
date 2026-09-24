@@ -2101,6 +2101,10 @@ class DatabaseHelper extends SQLiteOpenHelper {
             stmt = db.compileStatement("INSERT OR IGNORE INTO system(name,value)"
                     + " VALUES(?,?);");
 
+            // meoewmeow: the ROM owner's preferred defaults. Runs on first boot only,
+            // and INSERT OR IGNORE never overrides an existing value.
+            loadMeoewmeowDefaults(stmt, "system");
+
             loadBooleanSetting(stmt, Settings.System.DIM_SCREEN,
                     R.bool.def_dim_screen);
             loadIntegerSetting(stmt, Settings.System.SCREEN_OFF_TIMEOUT,
@@ -2177,6 +2181,10 @@ class DatabaseHelper extends SQLiteOpenHelper {
         try {
             stmt = db.compileStatement("INSERT OR IGNORE INTO secure(name,value)"
                     + " VALUES(?,?);");
+
+            // meoewmeow: the ROM owner's preferred defaults. Runs on first boot only,
+            // and INSERT OR IGNORE never overrides an existing value.
+            loadMeoewmeowDefaults(stmt, "secure");
 
             // Don't do this.  The SystemServer will initialize ADB_ENABLED from a
             // persistent system property instead.
@@ -2278,6 +2286,10 @@ class DatabaseHelper extends SQLiteOpenHelper {
         try {
             stmt = db.compileStatement("INSERT OR IGNORE INTO global(name,value)"
                     + " VALUES(?,?);");
+
+            // meoewmeow: the ROM owner's preferred defaults. Runs on first boot only,
+            // and INSERT OR IGNORE never overrides an existing value.
+            loadMeoewmeowDefaults(stmt, "global");
 
             // --- Previously in 'system'
             loadBooleanSetting(stmt, Settings.Global.AIRPLANE_MODE_ON,
@@ -2477,6 +2489,37 @@ class DatabaseHelper extends SQLiteOpenHelper {
              */
         } finally {
             if (stmt != null) stmt.close();
+        }
+    }
+
+    /**
+     * meoewmeow first-boot defaults. Keys are plain strings on purpose: several are
+     * crDroid/Axion additions without a Settings constant in every namespace.
+     */
+    private void loadMeoewmeowDefaults(SQLiteStatement stmt, String table) {
+        switch (table) {
+            case "global":
+                loadSetting(stmt, Settings.Global.ANIMATOR_DURATION_SCALE, "0.5");
+                loadSetting(stmt, "window_ignore_secure", 1);
+                loadSetting(stmt, "no_storage_restrict", 1);
+                loadSetting(stmt, "hide_screen_capture_status", 1);
+                break;
+            case "secure":
+                loadSetting(stmt, "window_ignore_secure", 1);
+                loadSetting(stmt, "no_storage_restrict", 1);
+                loadSetting(stmt, "ax_dynamic_bar_enabled", 1);
+                loadSetting(stmt, "themed_icon_blur_enabled", 1);
+                break;
+            case "system":
+                loadSetting(stmt, "show_app_volume", 1);
+                loadSetting(stmt, "multi_audio_focus_enabled", 1);
+                loadSetting(stmt, "qs_show_volume_slider", 0);
+                loadSetting(stmt, "wifi_standard_icon", 1);
+                loadSetting(stmt, "vibrate_on_connect", 1);
+                loadSetting(stmt, "pocket_judge", 1);
+                loadSetting(stmt, "gesture_navbar_length_mode", 0);
+                loadSetting(stmt, "gesture_navbar_height_mode", 0);
+                break;
         }
     }
 

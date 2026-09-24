@@ -1393,6 +1393,12 @@ public class NotificationStackScrollLayoutController implements Dumpable {
         mView.updateTopPadding(qsHeight, animate);
     }
 
+    public void setLockscreenBottomStackBounds(float top, float bottom, boolean onLockscreen,
+            boolean animate) {
+        SceneContainerFlag.assertInLegacyMode();
+        mView.setLockscreenBottomStackBounds(top, bottom, onLockscreen, animate);
+    }
+
     public boolean isScrolledToBottom() {
         SceneContainerFlag.assertInLegacyMode();
         return mView.isScrolledToBottom();

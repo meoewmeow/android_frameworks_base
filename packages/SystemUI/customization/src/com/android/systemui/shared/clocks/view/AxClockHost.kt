@@ -94,6 +94,12 @@ class AxClockHost(private val clock: AxClockView) {
             val trigger by state.fidgetTrigger
             val dozeAmount by state.dozeAmountFlow.collectAsState()
             val repositoryScale by ClockSettingsRepository.sizeScale.collectAsState()
+            val clockBackgroundBlurEnabled by
+                ClockSettingsRepository.clockBackgroundBlurEnabled.collectAsState()
+            val clockBackgroundBlurRadius by
+                ClockSettingsRepository.clockBackgroundBlurRadius.collectAsState()
+            val clockBackgroundTransparency by
+                ClockSettingsRepository.clockBackgroundTransparency.collectAsState()
             val repositoryHorizontalOffsetDp by
                 ClockSettingsRepository.horizontalOffsetDp.collectAsState()
             val configurationVersion = state.configurationVersion.intValue
@@ -102,6 +108,17 @@ class AxClockHost(private val clock: AxClockView) {
             val fidgetSpec = animationSpec.fidget
             val aodSpec = animationSpec.aod
             val sizeScale = ClockSettingsRepository.sizeScaleRange.clamp(repositoryScale)
+            LaunchedEffect(
+                clockBackgroundBlurEnabled,
+                clockBackgroundBlurRadius,
+                clockBackgroundTransparency,
+            ) {
+                clock.setClockBackgroundBlur(
+                    clockBackgroundBlurEnabled,
+                    clockBackgroundBlurRadius,
+                    clockBackgroundTransparency,
+                )
+            }
             val activeSizeScale = clock.previewSizeScaleOverride ?: sizeScale
             val requestedHorizontalOffsetDp =
                 clock.previewHorizontalOffsetDpOverride ?: repositoryHorizontalOffsetDp

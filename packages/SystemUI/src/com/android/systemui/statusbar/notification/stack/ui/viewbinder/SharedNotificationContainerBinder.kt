@@ -127,11 +127,17 @@ constructor(
 
                     if (!SceneContainerFlag.isEnabled) {
                         launch {
-                            viewModel.bounds.collect {
-                                val animate =
-                                    it.isAnimated || controller.isAddOrRemoveAnimationPending
-                                controller.updateTopPadding(it.top, animate)
-                            }
+                            combine(viewModel.bounds, viewModel.isOnLockscreenWithoutShade, ::Pair)
+                                .collect { (bounds, onLockscreen) ->
+                                    val animate =
+                                        bounds.isAnimated || controller.isAddOrRemoveAnimationPending
+                                    controller.setLockscreenBottomStackBounds(
+                                        bounds.top,
+                                        bounds.bottom,
+                                        onLockscreen,
+                                        animate,
+                                    )
+                                }
                         }
                     }
 

@@ -493,6 +493,12 @@ public class NotificationStackScrollLayout
      * shelf. -1 when there is no limit.
      */
     private int mMaxDisplayedNotifications = -1;
+    private int mLockscreenCollapsedMaxNotifications = -1;
+    private boolean mLockscreenNotificationsExpanded;
+    private boolean mLockscreenBottomStackEnabled;
+    private float mLockscreenBottomStackTop;
+    private float mLockscreenBottomStackBottom;
+    private int mRequestedMaxDisplayedNotifications = -1;
     private float mKeyguardBottomPadding = -1;
     @VisibleForTesting
     int mStatusBarHeight;
@@ -1477,6 +1483,25 @@ public class NotificationStackScrollLayout
         mAmbientState.setCurrentScrollVelocity(mScroller.isFinished()
                 ? 0
                 : mScroller.getCurrVelocity());
+        if (mShelf != null) {
+            int notificationCount = 0;
+            if (mLockscreenBottomStackEnabled && !mLockscreenNotificationsExpanded
+                    && mLockscreenCollapsedMaxNotifications > 0) {
+                for (int i = 0; i < getChildCount(); i++) {
+                    View child = getChildAt(i);
+                    if (child instanceof ExpandableNotificationRow row
+                            && child.getVisibility() != View.GONE && !row.willBeGone()
+                            && !row.isHeadsUpState()) {
+                        notificationCount++;
+                    }
+                }
+            }
+            mShelf.setBottomStackMoreCount(Math.max(0, notificationCount - 2));
+        }
+        mStackScrollAlgorithm.setLockscreenBottomStack(
+                mLockscreenBottomStackEnabled && !mLockscreenNotificationsExpanded
+                        && mLockscreenCollapsedMaxNotifications > 0,
+                mLockscreenBottomStackBottom);
         mStackScrollAlgorithm.resetViewStates(mAmbientState, getSpeedBumpIndex());
         if (!isCurrentlyAnimating() && !mNeedsAnimation) {
             applyCurrentState();
@@ -2926,6 +2951,17 @@ public class NotificationStackScrollLayout
                         shelfIntrinsicHeight, "updateContentHeight");
         setIntrinsicContentHeight(height);
 
+        if (mLockscreenBottomStackEnabled) {
+            int top = mLockscreenNotificationsExpanded
+                    ? (int) mLockscreenBottomStackTop
+                    : (int) Math.max(mLockscreenBottomStackTop,
+                            mLockscreenBottomStackBottom - height);
+            if (mAmbientState.getTopPadding() != top) {
+                mAmbientState.setTopPadding(top);
+                requestChildrenUpdate();
+            }
+        }
+
         // The topPadding can be bigger than the regular padding when qs is expanded, in that
         // state the maxPanelHeight and the contentHeight should be bigger
         setContentHeight(
@@ -3134,6 +3170,27 @@ public class NotificationStackScrollLayout
             onTopPaddingChanged(/* animate = */ animate && !mKeyguardBypassEnabled);
         }
         setExpandedHeight(mExpandedHeight);
+    }
+
+    public void setLockscreenBottomStackBounds(float top, float bottom, boolean onLockscreen,
+            boolean animate) {
+        boolean enabled = onLockscreen && !mShouldUseSplitNotificationShade;
+        boolean changed = enabled != mLockscreenBottomStackEnabled
+                || top != mLockscreenBottomStackTop || bottom != mLockscreenBottomStackBottom;
+        mLockscreenBottomStackEnabled = enabled;
+        mLockscreenBottomStackTop = top;
+        mLockscreenBottomStackBottom = bottom;
+        if (!enabled) {
+            mLockscreenNotificationsExpanded = false;
+        }
+        if (changed) {
+            setMaxDisplayedNotifications(mRequestedMaxDisplayedNotifications);
+        }
+        updateTopPadding(top, animate);
+        if (changed) {
+            updateContentHeight();
+            requestChildrenUpdate();
+        }
     }
 
     public int getLayoutMinHeight() {
@@ -4264,6 +4321,21 @@ public class NotificationStackScrollLayout
                 final int xDiff = Math.abs(x - mDownX);
                 final int yDiff = Math.abs(deltaY);
                 final float touchSlop = getTouchSlop(ev);
+                if (mLockscreenBottomStackEnabled && mAmbientState.isOnKeyguard()
+                        && mLockscreenCollapsedMaxNotifications > 0 && yDiff > touchSlop) {
+                    if (deltaY > 0 && !mLockscreenNotificationsExpanded) {
+                        expandLockscreenBottomStack();
+                    } else if (
+                            deltaY < 0 &&
+                                    mLockscreenNotificationsExpanded &&
+                                    getOwnScrollY() == 0
+                    ) {
+                        mLockscreenNotificationsExpanded = false;
+                        setMaxDisplayedNotifications(mRequestedMaxDisplayedNotifications);
+                        updateContentHeight();
+                        requestChildrenUpdate();
+                    }
+                }
                 if (!mIsBeingDragged && yDiff > touchSlop && yDiff > xDiff) {
                     setIsBeingDragged(true);
                     if (deltaY > 0) {
@@ -5755,6 +5827,15 @@ public class NotificationStackScrollLayout
 
     @Override
     public void setMaxDisplayedNotifications(int maxDisplayedNotifications) {
+        mRequestedMaxDisplayedNotifications = maxDisplayedNotifications;
+        if (!mLockscreenBottomStackEnabled) {
+            mLockscreenNotificationsExpanded = false;
+        } else {
+            mLockscreenCollapsedMaxNotifications = maxDisplayedNotifications < 0
+                    ? 2 : (maxDisplayedNotifications == 0 ? 0 : 2);
+            maxDisplayedNotifications = mLockscreenNotificationsExpanded
+                    ? -1 : mLockscreenCollapsedMaxNotifications;
+        }
         if (mMaxDisplayedNotifications != maxDisplayedNotifications) {
             if (mLogger != null) {
                 mLogger.setMaxDisplayedNotifications(maxDisplayedNotifications);
@@ -5771,6 +5852,14 @@ public class NotificationStackScrollLayout
             }
             notifyHeightChangeListener(mShelf);
         }
+    }
+
+    public void expandLockscreenBottomStack() {
+        if (!mLockscreenBottomStackEnabled || mLockscreenNotificationsExpanded) return;
+        mLockscreenNotificationsExpanded = true;
+        setMaxDisplayedNotifications(mRequestedMaxDisplayedNotifications);
+        updateContentHeight();
+        requestChildrenUpdate();
     }
 
     /**

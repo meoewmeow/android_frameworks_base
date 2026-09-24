@@ -44,6 +44,7 @@ import com.android.systemui.dagger.qualifiers.Application
 import com.android.systemui.display.data.repository.FocusedDisplayRepository
 import com.android.systemui.dump.DumpManager
 import com.android.systemui.keyguard.domain.interactor.KeyguardInteractor
+import android.provider.Settings
 import com.android.systemui.plugins.statusbar.StatusBarStateController
 import com.android.systemui.shade.ShadeExpansionChangeEvent
 import com.android.systemui.shade.ShadeExpansionListener
@@ -67,6 +68,7 @@ import javax.inject.Inject
 import kotlin.math.max
 import kotlin.math.roundToInt
 import kotlin.math.sign
+import com.android.systemui.tuner.TunerService
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 
@@ -95,8 +97,9 @@ constructor(
     private val focusedDisplayRepository: FocusedDisplayRepository,
     @Application private val applicationScope: CoroutineScope,
     private val desktopMode: Optional<DesktopMode>,
+    private val tunerService: TunerService,
     dumpManager: DumpManager,
-) : ShadeExpansionListener, Dumpable {
+) : ShadeExpansionListener, Dumpable, TunerService.Tunable {
     companion object {
         private const val WAKE_UP_ANIMATION_ENABLED = true
         private const val VELOCITY_SCALE = 100f
@@ -490,8 +493,26 @@ constructor(
         wakeAndUnlockBlurRadius = getNewWakeBlurRadius(ratio)
     }
 
+    /**
+     * Whether the ambient (AOD) wallpaper is blurred. Defaults to false so the AOD
+     * wallpaper stays sharp; every other blur surface is unaffected by this.
+     */
+    private var aodWallpaperBlurEnabled = false
+
+    override fun onTuningChanged(key: String?, newValue: String?) {
+        if (key != Settings.Secure.DOZE_WALLPAPER_BLUR_ENABLED) return
+        val enabled = TunerService.parseIntegerSwitch(newValue, false)
+        if (enabled == aodWallpaperBlurEnabled) return
+        aodWallpaperBlurEnabled = enabled
+        updateWakeBlurRadius(prevDozeAmount)
+        scheduleUpdate()
+    }
+
     private fun getNewWakeBlurRadius(ratio: Float): Float {
-        return if (!wallpaperSupportsAmbientMode) {
+        return if (!wallpaperSupportsAmbientMode || !aodWallpaperBlurEnabled) {
+            // Sharp ambient wallpaper: this only zeroes the doze/AOD contribution.
+            // Shade, QS, bouncer and transition blur all go through combinedBlur
+            // and are untouched.
             0f
         } else {
             blurUtils.blurRadiusOfRatioForAod(ratio)
@@ -529,6 +550,7 @@ constructor(
             }
         }
         initBlurListeners()
+        tunerService.addTunable(this, Settings.Secure.DOZE_WALLPAPER_BLUR_ENABLED)
     }
 
     private fun initBlurListeners() {

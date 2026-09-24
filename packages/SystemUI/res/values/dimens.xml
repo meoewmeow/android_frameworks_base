@@ -639,6 +639,7 @@
     <dimen name="nssl_split_shade_min_content_height">256dp</dimen>
 
     <dimen name="notification_panel_margin_bottom">32dp</dimen>
+    <dimen name="keyguard_notification_stack_peek">18dp</dimen>
 
     <!-- The bottom padding of the panel that holds the list of notifications. -->
     <dimen name="notification_panel_padding_bottom">0dp</dimen>
@@ -688,7 +689,8 @@
 
     <dimen name="volume_dialog_elevation">9dp</dimen>
 
-    <dimen name="volume_dialog_background_blur_radius">0dp</dimen>
+    <dimen name="volume_dialog_background_blur_radius">28dp</dimen>
+    <dimen name="notification_background_blur_radius">24dp</dimen>
 
     <dimen name="volume_tool_tip_right_margin">76dp</dimen>
 

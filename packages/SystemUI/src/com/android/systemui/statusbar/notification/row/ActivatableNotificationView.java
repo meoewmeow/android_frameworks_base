@@ -367,6 +367,10 @@ public abstract class ActivatableNotificationView extends ExpandableOutlineView 
     /** Updates background blur/transparency when transparent state changes. */
     public void updateIfNeeded() {
         boolean transparent = usesTransparentBackground();
+        if (mBackgroundNormal != null) {
+            mBackgroundNormal.setBackdropBlurEnabled(
+                    transparent && mOnKeyguard && mIsLockscreenBlurSupported);
+        }
         if (mUseTransparent != transparent) {
             mUseTransparent = transparent;
             if (mBackgroundNormal != null) {

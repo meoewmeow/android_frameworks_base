@@ -1429,7 +1429,7 @@ class SharedNotificationContainerViewModelTest(flags: FlagsParameterization) : S
 
     @Test
     @DisableSceneContainer
-    fun notificationAbsoluteBottom_maxNotificationChanged() =
+    fun notificationAbsoluteBottom_staysAnchoredWhenNotificationCountChanges() =
         kosmos.runTest {
             enableSingleShade()
             var notificationCount = 2
@@ -1452,12 +1452,36 @@ class SharedNotificationContainerViewModelTest(flags: FlagsParameterization) : S
 
             sharedNotificationContainerInteractor.notificationStackChanged()
             advanceTimeBy(50L)
-            assertThat(stackAbsoluteBottom).isEqualTo(150F)
+            assertThat(stackAbsoluteBottom).isEqualTo(300F)
 
             notificationCount = 3
             sharedNotificationContainerInteractor.notificationStackChanged()
             advanceTimeBy(50L)
-            assertThat(stackAbsoluteBottom).isEqualTo(170F)
+            assertThat(stackAbsoluteBottom).isEqualTo(300F)
+        }
+
+    @Test
+    @DisableSceneContainer
+    fun notificationAbsoluteBottom_splitShadeStillUsesMeasuredHeight() =
+        kosmos.runTest {
+            enableSplitShade()
+            val notificationCount = 2
+            val stackAbsoluteBottom by
+                collectLastValue(
+                    underTest.getNotificationStackAbsoluteBottomOnLockscreen(
+                        { _: Float, _: Boolean -> notificationCount },
+                        { count: Int -> count * 20F + 10F },
+                    )
+                )
+            activeNotificationListRepository.setActiveNotifs(notificationCount)
+            showLockscreen()
+            keyguardInteractor.setNotificationContainerBounds(
+                NotificationContainerBounds(top = 100F, bottom = 300F)
+            )
+            sharedNotificationContainerInteractor.notificationStackChanged()
+            advanceTimeBy(50L)
+
+            assertThat(stackAbsoluteBottom).isEqualTo(150F)
         }
 
     @Test
@@ -1489,7 +1513,7 @@ class SharedNotificationContainerViewModelTest(flags: FlagsParameterization) : S
 
     @Test
     @DisableSceneContainer
-    fun notificationAbsoluteBottomOnLockscreen_heightChangedWithoutMaxNotificationChange() =
+    fun notificationAbsoluteBottomOnLockscreen_staysAnchoredWhenHeightChanges() =
         kosmos.runTest {
             val notificationCount = 2
             val calculateSpace = { _: Float, _: Boolean -> notificationCount }
@@ -1513,12 +1537,12 @@ class SharedNotificationContainerViewModelTest(flags: FlagsParameterization) : S
 
             sharedNotificationContainerInteractor.notificationStackChanged()
             advanceTimeBy(50L)
-            assertThat(stackAbsoluteBottom).isEqualTo(150F)
+            assertThat(stackAbsoluteBottom).isEqualTo(300F)
 
             shelfHeight = 0f
             sharedNotificationContainerInteractor.notificationStackChanged()
             advanceTimeBy(50L)
-            assertThat(stackAbsoluteBottom).isEqualTo(140F)
+            assertThat(stackAbsoluteBottom).isEqualTo(300F)
         }
 
     @Test
@@ -1572,14 +1596,14 @@ class SharedNotificationContainerViewModelTest(flags: FlagsParameterization) : S
                 NotificationContainerBounds(top = 100F, bottom = 300F)
             )
             advanceTimeBy(50L)
-            assertThat(stackAbsoluteBottom).isEqualTo(150F)
+            assertThat(stackAbsoluteBottom).isEqualTo(300F)
 
             showLockscreenWithQSExpanded()
             keyguardInteractor.setNotificationContainerBounds(
                 NotificationContainerBounds(top = 200F, bottom = 300F)
             )
             advanceTimeBy(50L)
-            assertThat(stackAbsoluteBottom).isEqualTo(150F)
+            assertThat(stackAbsoluteBottom).isEqualTo(300F)
         }
 
     @Test
@@ -1605,7 +1629,7 @@ class SharedNotificationContainerViewModelTest(flags: FlagsParameterization) : S
                 NotificationContainerBounds(top = 100F, bottom = 100F)
             )
             advanceTimeBy(50L)
-            assertThat(stackAbsoluteBottom).isEqualTo(200F)
+            assertThat(stackAbsoluteBottom).isEqualTo(100F)
         }
 
     @Test

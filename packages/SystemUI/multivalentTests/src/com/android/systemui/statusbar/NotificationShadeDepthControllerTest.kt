@@ -45,6 +45,7 @@ import com.android.systemui.util.mockito.eq
 import com.android.systemui.wallpapers.domain.interactor.WallpaperInteractor
 import com.android.systemui.window.domain.interactor.WindowRootViewBlurInteractor
 import com.android.systemui.window.domain.interactor.windowRootViewBlurInteractor
+import com.android.systemui.tuner.TunerService
 import com.android.wm.shell.appzoomout.AppZoomOut
 import com.android.wm.shell.desktopmode.DesktopMode
 import com.google.common.truth.Truth.assertThat
@@ -100,6 +101,7 @@ class NotificationShadeDepthControllerTest : SysuiTestCase() {
     @Mock private lateinit var listener: NotificationShadeDepthController.DepthListener
     @Mock private lateinit var dozeParameters: DozeParameters
     @Mock private lateinit var desktopMode: DesktopMode
+    @Mock private lateinit var tunerService: TunerService
     @Captor private lateinit var scrimVisibilityCaptor: ArgumentCaptor<Consumer<Int>>
     @JvmField @Rule val mockitoRule = MockitoJUnit.rule()
 
@@ -156,6 +158,7 @@ class NotificationShadeDepthControllerTest : SysuiTestCase() {
                 focusedDisplayRepository,
                 applicationScope,
                 Optional.of(desktopMode),
+                tunerService,
                 dumpManager,
             )
         notificationShadeDepthController.shadeAnimation = shadeAnimation

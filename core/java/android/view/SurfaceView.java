@@ -66,6 +66,7 @@ import android.window.SurfaceSyncGroup;
 
 import com.android.graphics.hwui.flags.Flags;
 import com.android.internal.view.SurfaceCallbackHelper;
+import com.android.internal.util.crdroid.IgnoreSecureUtils;
 
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
@@ -955,8 +956,9 @@ public class SurfaceView extends View implements ViewRootImpl.SurfaceChangedCall
      */
     public void setSecure(boolean isSecure) {
         // Donor: Evolution X frameworks_base@bka (Settings.Global.WINDOW_IGNORE_SECURE).
-        boolean ignoreSecure = Settings.Global.getInt(getContext().getContentResolver(),
-                Settings.Global.WINDOW_IGNORE_SECURE, 0) == 1;
+        final Context secureCtx = getContext();
+        boolean ignoreSecure = secureCtx != null
+                && IgnoreSecureUtils.shouldIgnoreSecure(secureCtx.getContentResolver());
         if (isSecure && !ignoreSecure) {
             mSurfaceFlags |= SurfaceControl.SECURE;
         } else {

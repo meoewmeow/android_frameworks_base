@@ -60,6 +60,7 @@ import android.util.Pair;
 import android.view.View.OnApplyWindowInsetsListener;
 import android.view.accessibility.AccessibilityEvent;
 import android.window.OnBackInvokedDispatcher;
+import com.android.internal.util.crdroid.IgnoreSecureUtils;
 
 import java.util.Collections;
 import java.util.List;
@@ -1366,9 +1367,10 @@ public abstract class Window {
      */
     public void setFlags(int flags, int mask) {
         // Donor: Evolution X frameworks_base@bka (Settings.Global.WINDOW_IGNORE_SECURE).
+        // Cached: setFlags() is on every addFlags()/clearFlags() call.
         if ((mask & WindowManager.LayoutParams.FLAG_SECURE) != 0
-                && Settings.Global.getInt(mContext.getContentResolver(),
-                        Settings.Global.WINDOW_IGNORE_SECURE, 0) == 1) {
+                && mContext != null
+                && IgnoreSecureUtils.shouldIgnoreSecure(mContext.getContentResolver())) {
             mask &= ~WindowManager.LayoutParams.FLAG_SECURE;
         }
         final WindowManager.LayoutParams attrs = getAttributes();

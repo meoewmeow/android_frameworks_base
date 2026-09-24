@@ -853,6 +853,9 @@
     <!-- The overflow indicator shown when a group has more notification inside the group than the visible ones. An example is "+ 3" [CHAR LIMIT=5] -->
     <string name="notification_group_overflow_indicator">+ <xliff:g id="number" example="3">%s</xliff:g></string>
 
+    <string name="keyguard_bottom_stack_one_more">1 more notification</string>
+    <string name="keyguard_bottom_stack_more"><xliff:g id="count" example="3">%d</xliff:g> more notifications</string>
+
     <!-- Content description describing how many more notifications are in a group [CHAR LIMIT=NONE] -->
     <string name="notification_group_overflow_description">{count, plural,
         =1 {# more notification inside.}

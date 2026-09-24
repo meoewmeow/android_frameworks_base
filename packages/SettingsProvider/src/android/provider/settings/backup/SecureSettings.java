@@ -133,6 +133,8 @@ public class SecureSettings {
         Settings.Secure.DOZE_ENABLED,
         Settings.Secure.DOZE_ALWAYS_ON,
         Settings.Secure.DOZE_ALWAYS_ON_WALLPAPER_ENABLED,
+        Settings.Secure.DOZE_WALLPAPER_BLUR_ENABLED,
+        Settings.Secure.THEMED_ICON_BLUR_ENABLED,
         Settings.Secure.DOZE_PICK_UP_GESTURE,
         Settings.Secure.DOZE_DOUBLE_TAP_GESTURE,
         Settings.Secure.DOZE_TAP_SCREEN_GESTURE,

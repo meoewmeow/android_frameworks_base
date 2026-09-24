@@ -59,6 +59,7 @@ import com.android.internal.annotations.GuardedBy;
 import com.android.internal.os.ApplicationSharedMemory;
 import com.android.internal.policy.PhoneWindow;
 import com.android.internal.util.FastPrintWriter;
+import com.android.internal.util.crdroid.IgnoreSecureUtils;
 
 import java.io.FileDescriptor;
 import java.io.FileOutputStream;
@@ -482,9 +483,11 @@ public final class WindowManagerGlobal {
             }
 
             // Donor: Evolution X frameworks_base@bka (Settings.Global.WINDOW_IGNORE_SECURE).
-            boolean ignoreSecure = Settings.Global.getInt(
-                    view.getContext().getContentResolver(),
-                    Settings.Global.WINDOW_IGNORE_SECURE, 0) == 1;
+            // Cached: this runs while mLock is held, so it must not touch the
+            // settings provider (which lives inside system_server) from here.
+            final Context ctx = view.getContext();
+            boolean ignoreSecure = ctx != null
+                    && IgnoreSecureUtils.shouldIgnoreSecure(ctx.getContentResolver());
 
             if (ignoreSecure) {
                 wparams.flags &= ~WindowManager.LayoutParams.FLAG_SECURE;
@@ -521,9 +524,10 @@ public final class WindowManagerGlobal {
         }
 
         // Donor: Evolution X frameworks_base@bka (Settings.Global.WINDOW_IGNORE_SECURE).
-        boolean ignoreSecure = Settings.Global.getInt(
-                view.getContext().getContentResolver(),
-                Settings.Global.WINDOW_IGNORE_SECURE, 0) == 1;
+        // Cached: this is on the keyguard/shade relayout path.
+        final Context updateCtx = view.getContext();
+        boolean ignoreSecure = updateCtx != null
+                && IgnoreSecureUtils.shouldIgnoreSecure(updateCtx.getContentResolver());
 
         if (ignoreSecure) {
             wparams.flags &= ~WindowManager.LayoutParams.FLAG_SECURE;

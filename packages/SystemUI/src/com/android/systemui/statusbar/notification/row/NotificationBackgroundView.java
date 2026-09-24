@@ -21,6 +21,7 @@ import static com.android.systemui.util.ColorUtilKt.hexColorString;
 import android.content.Context;
 import android.content.res.ColorStateList;
 import android.graphics.Canvas;
+import android.graphics.Outline;
 import android.graphics.Path;
 import android.graphics.PorterDuff;
 import android.graphics.PorterDuffColorFilter;
@@ -37,6 +38,7 @@ import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 
 import com.android.internal.util.ContrastColorUtil;
+import com.android.internal.graphics.drawable.BackgroundBlurDrawable;
 import com.android.systemui.Dumpable;
 import com.android.systemui.common.shared.colors.SurfaceEffectColors;
 import com.android.systemui.res.R;
@@ -54,6 +56,8 @@ public class NotificationBackgroundView extends View implements Dumpable,
 
     private final boolean mDontModifyCorners;
     private Drawable mBackground;
+    @Nullable private BackgroundBlurDrawable mBlurDrawable;
+    private final Outline mBlurOutline = new Outline();
     private int mClipTopAmount;
     private int mTopOverlap;
     private int mBottomOverlap;
@@ -81,6 +85,7 @@ public class NotificationBackgroundView extends View implements Dumpable,
     private boolean mDrawDismissButtonCutout = false;
 
     private boolean mIsBlurSupported = false;
+    private boolean mBackdropBlurEnabled;
 
     public NotificationBackgroundView(Context context, AttributeSet attrs) {
         super(context, attrs);
@@ -103,8 +108,61 @@ public class NotificationBackgroundView extends View implements Dumpable,
         if (mIsBlurSupported != isBlurSupported) {
             mIsBlurSupported = isBlurSupported;
             setStatefulColors();
+            updateBlurDrawable();
             invalidate();
         }
+    }
+
+    public void setBackdropBlurEnabled(boolean enabled) {
+        if (mBackdropBlurEnabled != enabled) {
+            mBackdropBlurEnabled = enabled;
+            updateBlurDrawable();
+            invalidate();
+        }
+    }
+
+    @Override
+    protected void onAttachedToWindow() {
+        super.onAttachedToWindow();
+        updateBlurDrawable();
+    }
+
+    @Override
+    protected void onDetachedFromWindow() {
+        if (mBlurDrawable != null) {
+            mBlurDrawable.setVisible(false, false);
+            mBlurDrawable.setBlurRadius(0);
+        }
+        super.onDetachedFromWindow();
+    }
+
+    private void updateBlurDrawable() {
+        if (!mBackdropBlurEnabled || !isAttachedToWindow()) {
+            if (mBlurDrawable != null) {
+                mBlurDrawable.setVisible(false, false);
+                mBlurDrawable.setBlurRadius(0);
+            }
+            return;
+        }
+
+        if (mBlurDrawable == null) {
+            if (getViewRootImpl() == null) return;
+            mBlurDrawable = getViewRootImpl().createBackgroundBlurDrawable();
+            mBlurDrawable.setCallback(this);
+        }
+
+        mBlurDrawable.setColor(android.graphics.Color.TRANSPARENT);
+        mBlurDrawable.setBlurRadius(getResources().getDimensionPixelSize(
+                R.dimen.notification_background_blur_radius));
+        if (!mDontModifyCorners || mCornerRadii[0] > 0 || mCornerRadii[4] > 0) {
+            mBlurDrawable.setCornerRadius(
+                    mCornerRadii[0], mCornerRadii[2], mCornerRadii[6], mCornerRadii[4]);
+        } else if (mBackground != null) {
+            mBlurOutline.setEmpty();
+            mBackground.getOutline(mBlurOutline);
+            mBlurDrawable.setCornerRadius(Math.max(0f, mBlurOutline.getRadius()));
+        }
+        mBlurDrawable.setVisible(true, false);
     }
 
     @Override
@@ -131,18 +189,29 @@ public class NotificationBackgroundView extends View implements Dumpable,
             }
 
             if (!NotificationAddXOnHoverToDismiss.isEnabled()) {
+                draw(canvas, mBlurDrawable);
                 draw(canvas, mBackground);
                 canvas.restore();
                 return;
             }
 
             Rect backgroundBounds = null;
-            if (mBackground != null || mDrawDismissButtonCutout) {
+            if (mBackground != null || mBlurDrawable != null || mDrawDismissButtonCutout) {
                 backgroundBounds = calculateBackgroundBounds();
             }
 
             if (mDrawDismissButtonCutout) {
                 canvas.clipPath(calculateDismissButtonCutoutPath(backgroundBounds));
+            }
+
+            if (mBlurDrawable != null) {
+                int blurBottom = Math.min(backgroundBounds.bottom,
+                        getActualHeight() - clipBottomAmount);
+                int blurTop = Math.min(blurBottom,
+                        Math.max(backgroundBounds.top, (int) clipTop));
+                mBlurDrawable.setBounds(backgroundBounds.left, blurTop,
+                        backgroundBounds.right, blurBottom);
+                mBlurDrawable.draw(canvas);
             }
 
             if (mBackground != null) {
@@ -220,7 +289,7 @@ public class NotificationBackgroundView extends View implements Dumpable,
         NotificationAddXOnHoverToDismiss.assertInLegacyMode();
 
         if (drawable != null) {
-            int top = 0;
+            int top = drawable == mBlurDrawable ? Math.max(mClipTopAmount, mTopOverlap) : 0;
             int bottom = getActualHeight();
             if (mBottomIsRounded
                     && mBottomAmountClips
@@ -247,7 +316,7 @@ public class NotificationBackgroundView extends View implements Dumpable,
 
     @Override
     protected boolean verifyDrawable(Drawable who) {
-        return super.verifyDrawable(who) || who == mBackground;
+        return super.verifyDrawable(who) || who == mBackground || who == mBlurDrawable;
     }
 
     @Override
@@ -294,6 +363,7 @@ public class NotificationBackgroundView extends View implements Dumpable,
             ((RippleDrawable) mBackground).setForceSoftware(true);
         }
         updateBackgroundRadii();
+        updateBlurDrawable();
         invalidate();
     }
 
@@ -433,6 +503,7 @@ public class NotificationBackgroundView extends View implements Dumpable,
         mCornerRadii[6] = bottomRoundness;
         mCornerRadii[7] = bottomRoundness;
         updateBackgroundRadii();
+        updateBlurDrawable();
     }
 
     public void setBottomAmountClips(boolean clips) {

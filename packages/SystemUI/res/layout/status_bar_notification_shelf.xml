@@ -36,6 +36,14 @@
         android:paddingEnd="@dimen/shelf_icon_container_padding"
         android:gravity="center_vertical" />
 
+    <TextView
+        android:id="@+id/keyguard_bottom_stack_more"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:gravity="center"
+        android:textAppearance="?android:attr/textAppearanceSmall"
+        android:visibility="gone" />
+
     <com.android.systemui.statusbar.notification.FakeShadowView
         android:id="@+id/fake_shadow"
         android:layout_width="match_parent"
