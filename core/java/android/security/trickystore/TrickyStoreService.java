@@ -61,8 +61,8 @@ public class TrickyStoreService {
     private volatile CustomPatchLevel mCustomPatchLevel = null;
     private final Map<String, CustomPatchLevel> mPerPackagePatchLevels = new ConcurrentHashMap<>();
     private volatile String mLastKeyboxFingerprint = null;
-    // Rime: master switch from Settings.System; null means "not fetched yet" and
-    // is treated as enabled so existing installs keep spoofing after this update.
+    // Rime: master switch from Settings.System; null (not fetched yet, or the
+    // fetch failed) is treated as disabled.
     private volatile String mEnabled = null;
 
     private final KeyBoxManager mKeyBoxManager;
@@ -245,6 +245,12 @@ public class TrickyStoreService {
             checkKeyboxRevocation(xml);
             mKeyBoxManager.parseKeybox(xml);
             if (mKeyBoxManager.hasKeyboxes()) {
+                if (mKeyBoxManager.getKeybox("EC") == null) {
+                    Log.w(TAG, "Keybox warning: no usable EC key");
+                }
+                if (mKeyBoxManager.getKeybox("RSA") == null) {
+                    Log.w(TAG, "Keybox warning: no usable RSA key");
+                }
                 mLastKeyboxFingerprint = fingerprint;
                 Log.i(TAG, "Keybox updated successfully");
             } else {
@@ -411,20 +417,19 @@ public class TrickyStoreService {
         }
     }
 
+    // Rime: structural check only; which key types are present is decided after
+    // parsing, since the algorithm attribute is not a reliable label.
     private boolean isValidKeyboxXml(String xml) {
-        boolean hasEcdsa = xml.contains("<Key algorithm=\"ecdsa\">");
-        boolean hasRsa = xml.contains("<Key algorithm=\"rsa\">");
+        boolean hasKey = xml.contains("<PrivateKey");
         boolean hasId = xml.contains("<serial>") || xml.contains("DeviceID");
-        if (!hasEcdsa && !hasRsa) {
-            Log.e(TAG, "Keybox validation failed: no ECDSA or RSA key block found");
+        if (!hasKey) {
+            Log.e(TAG, "Keybox validation failed: no key block found");
             return false;
         }
         if (!hasId) {
             Log.e(TAG, "Keybox validation failed: no identifier field (serial/DeviceID)");
             return false;
         }
-        if (!hasEcdsa) Log.w(TAG, "Keybox warning: missing ECDSA key block");
-        if (!hasRsa)   Log.w(TAG, "Keybox warning: missing RSA key block");
         return true;
     }
 
@@ -605,8 +610,9 @@ public class TrickyStoreService {
     }
 
     // Rime: master switch support (Settings.System.SPOOF_TRICKYSTORE_ENABLED).
+    // Fails closed: only an explicit "1"/"true" enables the framework layer.
     private boolean isEnabled() {
-        return mEnabled == null || !("0".equals(mEnabled) || "false".equalsIgnoreCase(mEnabled));
+        return "1".equals(mEnabled) || "true".equalsIgnoreCase(mEnabled);
     }
 
     private void maybeRefreshTargets() {

@@ -174,20 +174,6 @@ public class KeyBoxManager {
 
     private void processKeybox(String algorithm, String privateKeyPem, List<String> certificatePems) {
         try {
-            String normalizedAlgorithm;
-            switch (algorithm.toLowerCase()) {
-                case "ec":
-                case "ecdsa":
-                    normalizedAlgorithm = "EC";
-                    break;
-                case "rsa":
-                    normalizedAlgorithm = "RSA";
-                    break;
-                default:
-                    normalizedAlgorithm = algorithm;
-            }
-
-            PrivateKey privateKey = parsePrivateKey(privateKeyPem, normalizedAlgorithm);
             List<Certificate> certificates = new ArrayList<>();
             CertificateFactory certFactory = CertificateFactory.getInstance("X.509");
 
@@ -199,12 +185,34 @@ public class KeyBoxManager {
 
             if (!certificates.isEmpty()) {
                 PublicKey publicKey = ((X509Certificate) certificates.get(0)).getPublicKey();
+                // Rime: key the entry by the leaf's real key type; published keyboxes put
+                // arbitrary labels in the algorithm attribute (e.g. "@evokerr" for RSA).
+                String normalizedAlgorithm = normalizeAlgorithm(publicKey.getAlgorithm());
+                if (normalizedAlgorithm == null) {
+                    Log.e(TAG, "Unsupported key type " + publicKey.getAlgorithm()
+                            + " in keybox entry labelled " + algorithm);
+                    return;
+                }
+                PrivateKey privateKey = parsePrivateKey(privateKeyPem, normalizedAlgorithm);
                 KeyPair keyPair = new KeyPair(publicKey, privateKey);
                 mKeyboxes.put(normalizedAlgorithm, new KeyBox(keyPair, certificates));
                 Log.i(TAG, "Added keybox for algorithm: " + normalizedAlgorithm);
             }
         } catch (Exception e) {
             Log.e(TAG, "Failed to process keybox for algorithm: " + algorithm, e);
+        }
+    }
+
+    private static String normalizeAlgorithm(String algorithm) {
+        if (algorithm == null) return null;
+        switch (algorithm.toLowerCase()) {
+            case "ec":
+            case "ecdsa":
+                return "EC";
+            case "rsa":
+                return "RSA";
+            default:
+                return null;
         }
     }
 

@@ -164,7 +164,7 @@ public class AxSpoofManager implements IAxSpoofManager {
 
     @Override
     public String getTrickyStoreEnabled() {
-        return getCachedSystem(Settings.System.SPOOF_TRICKYSTORE_ENABLED, "1");
+        return getCachedSystem(Settings.System.SPOOF_TRICKYSTORE_ENABLED, "0");
     }
 
     @Override
