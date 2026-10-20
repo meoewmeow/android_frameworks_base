@@ -510,6 +510,7 @@ android_library {
     name: "SystemUI-core",
     srcs: [
         ":SystemUI-core-srcs",
+        ":rime-systemui-adapter-srcs",
         ":ReleaseJavaFiles",
         ":ax_systemui_sources",
         "compose/features/src/**/*.kt",
@@ -517,6 +518,7 @@ android_library {
     ],
     defaults: ["SystemUI-srcs-defaults"],
     static_libs: [
+        "RimeSharedUI",
         "//frameworks/libs/systemui:compilelib",
         "com.android.systemui.pods-api-aosp-handheld",
         "ax_platform_hooks",
@@ -733,6 +735,7 @@ android_library {
     ],
     static_libs: [
         "SystemUI-res",
+        "FadingEdgeLayoutLib",
         "WifiTrackerLib",
         "PlatformAnimationLib",
         "PlatformMotionTestingCompose",
@@ -848,7 +851,10 @@ android_library {
         "//frameworks/libs/systemui:compilelib",
         "com.android.systemui.pods-api-aosp-handheld",
         "com.android.systemui.pods-impl-aosp-handheld",
+        "ax_platform_hooks",
         "ax_blur",
+        "smartspace-proto-java",
+        "smartspace-proto-lite-java",
         "SystemUI-tests-base",
         "androidx.test.uiautomator_uiautomator",
         "androidx.core_core-animation-testing",
@@ -883,6 +889,7 @@ android_library {
     ],
     javacflags: [
         "-Adagger.useBindingGraphFix=ENABLED",
+        "-Aroom.schemaLocation=frameworks/base/packages/SystemUI/schemas",
     ],
 
     aaptflags: [

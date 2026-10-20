@@ -1,0 +1,4 @@
+<resources>
+    <string name="app_name">Rime UI Preview</string>
+    <string name="notification_listener_label">Rime UI Preview notifications</string>
+</resources>

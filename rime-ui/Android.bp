@@ -1,0 +1,44 @@
+// Copyright (C) 2026 Rime contributors
+// SPDX-License-Identifier: Apache-2.0
+package {
+    default_applicable_licenses: ["frameworks_base_license"],
+}
+
+// The Gradle APK and SystemUI compile these exact same presentation sources/assets.
+android_library {
+    name: "RimeSharedUI",
+    srcs: ["shared-ui/src/main/java/**/*.kt"],
+    manifest: "shared-ui/AndroidManifest-systemui.xml",
+    asset_dirs: ["shared-ui/src/main/assets"],
+    resource_dirs: [],
+    sdk_version: "current",
+    min_sdk_version: "current",
+    static_libs: [
+        "androidx.compose.animation_animation",
+        "androidx.compose.animation_animation-core",
+        "androidx.compose.foundation_foundation",
+        "androidx.compose.foundation_foundation-layout",
+        "androidx.compose.material_material-icons-extended",
+        "androidx.compose.runtime_runtime",
+        "androidx.compose.ui_ui",
+        "androidx.compose.ui_ui-graphics",
+        "kotlinx_coroutines",
+    ],
+    kotlincflags: [
+        "-Xjvm-default=all",
+        "-opt-in=androidx.compose.foundation.ExperimentalFoundationApi",
+        "-P plugin:androidx.compose.compiler.plugins.kotlin:sourceInformation=true",
+    ],
+    // SystemUI shows the lock screen; the forked AxThemePicker hosts the customization page.
+    visibility: [
+        "//frameworks/base/packages/SystemUI:__subpackages__",
+        "//packages/apps/AxThemePicker",
+    ],
+}
+
+// Compiled with SystemUI-core to avoid a dependency cycle on SystemUI controllers.
+filegroup {
+    name: "rime-systemui-adapter-srcs",
+    srcs: ["systemui-adapter/src/main/java/**/*.kt"],
+    visibility: ["//frameworks/base/packages/SystemUI:__subpackages__"],
+}

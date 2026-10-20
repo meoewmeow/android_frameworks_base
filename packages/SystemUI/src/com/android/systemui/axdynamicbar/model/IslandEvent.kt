@@ -1,6 +1,5 @@
 package com.android.systemui.axdynamicbar.model
 
-import android.app.Notification
 import android.app.RemoteInput
 import android.graphics.drawable.Drawable
 import android.net.Uri
@@ -252,11 +251,14 @@ sealed class IslandEvent(open val priority: Int, val id: String) : Comparable<Is
         val lastActiveTime: Long = System.currentTimeMillis(),
     )
 
-    data class NotificationAction(val label: CharSequence, val action: Notification.Action)
+    data class NotificationAction(
+        val label: CharSequence,
+        val action: android.app.Notification.Action,
+    )
 
     data class ReplyAction(
         val label: CharSequence,
-        val action: Notification.Action,
+        val action: android.app.Notification.Action,
         val remoteInput: RemoteInput,
     )
 

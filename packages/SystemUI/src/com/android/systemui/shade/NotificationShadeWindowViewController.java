@@ -161,6 +161,8 @@ public class NotificationShadeWindowViewController implements Dumpable {
     private final PanelExpansionInteractor mPanelExpansionInteractor;
     private final ShadeExpansionStateManager mShadeExpansionStateManager;
 
+    private final com.android.systemui.rime.RimeLockscreenController mRimeLockscreenController;
+
     private ViewGroup mBouncerParentView;
     /**
      * If {@code true}, an external touch sent in {@link #handleExternalTouch(MotionEvent)} has been
@@ -235,7 +237,9 @@ public class NotificationShadeWindowViewController implements Dumpable {
             ShadeStatusBarComponentsInteractor shadeStatusBarComponentsInteractor,
             DozeTouchInteractor dozeTouchInteractor,
             JavaAdapter javaAdapter,
-            QQSGestureListener qqsGestureListener) {
+            QQSGestureListener qqsGestureListener,
+            com.android.systemui.rime.RimeLockscreenController rimeLockscreenController) {
+        mRimeLockscreenController = rimeLockscreenController;
         mLockscreenShadeTransitionController = transitionController;
         mFalsingCollector = falsingCollector;
         mStatusBarStateController = statusBarStateController;
@@ -401,6 +405,7 @@ public class NotificationShadeWindowViewController implements Dumpable {
 
     /** Inflates the {@link R.layout#status_bar_expanded} layout and sets it up. */
     public void setupExpandedStatusBar() {
+        mRimeLockscreenController.attach(mView);
         mStackScrollLayout = mView.findViewById(R.id.notification_stack_scroller);
         mPulsingWakeupGestureHandler = new GestureDetector(mView.getContext(),
                 mPulsingGestureListener);
@@ -468,6 +473,10 @@ public class NotificationShadeWindowViewController implements Dumpable {
                 }
 
                 mFalsingCollector.onTouchEvent(ev);
+                Boolean rimeTouchResult = mRimeLockscreenController.dispatchTouch(ev);
+                if (rimeTouchResult != null) {
+                    return rimeTouchResult;
+                }
                 mQQSGestureHandler.onTouchEvent(ev);
                 // Pass touch events to the pulsing gesture listener only if it's dozing,
                 // otherwise lockscreen DT2S and AOD DT2W will conflict.

@@ -1,0 +1,10 @@
+.gradle/
+**/build/
+local.properties
+.idea/
+*.iml
+
+.preview-build.lock
+last-build-result.txt
+last-build.log
+.kotlin/

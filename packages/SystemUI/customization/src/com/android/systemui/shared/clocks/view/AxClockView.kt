@@ -20,7 +20,6 @@ import android.content.Context
 import android.content.res.Configuration
 import android.graphics.*
 import android.graphics.Color as AndroidColor
-import android.graphics.drawable.GradientDrawable
 import android.graphics.drawable.LayerDrawable
 import android.icu.util.TimeZone
 import android.text.format.DateFormat
@@ -125,12 +124,11 @@ abstract class AxClockView @JvmOverloads constructor(
     private var renderedClockBitmap: Bitmap? = null
     private var renderedClockPixels = IntArray(0)
     private val renderedClockContentBounds = Rect()
+    private val renderedClockShapePath = Path()
     private val originalBackground = background
     private var clockBackgroundBlurDrawable: BackgroundBlurDrawable? = null
-    private var clockBackgroundTintDrawable: GradientDrawable? = null
     private var clockBackgroundLayers: LayerDrawable? = null
     private var clockBackgroundBlurLayerIndex = 0
-    private var clockBackgroundTintLayerIndex = 1
     private var clockBackgroundBlurEnabled = true
     private var clockBackgroundBlurRadiusPct = 55
     private var clockBackgroundTransparencyPct = 45
@@ -312,15 +310,16 @@ abstract class AxClockView @JvmOverloads constructor(
     }
 
     override fun onDetachedFromWindow() {
+        host.view.alpha = 1f
         clockBackgroundBlurDrawable?.apply {
             setVisible(false, false)
             setBlurRadius(0)
         }
         if (background === clockBackgroundLayers) setBackground(originalBackground)
         clockBackgroundBlurDrawable = null
-        clockBackgroundTintDrawable = null
         clockBackgroundLayers = null
         renderedClockContentBounds.setEmpty()
+        renderedClockShapePath.reset()
         super.onDetachedFromWindow()
         Log.d(tag, "onDetachedFromWindow")
         uiScope?.cancel()
@@ -357,13 +356,15 @@ abstract class AxClockView @JvmOverloads constructor(
         clockBackgroundBlurEnabled = enabled
         clockBackgroundBlurRadiusPct = radiusPct.coerceIn(0, 100)
         clockBackgroundTransparencyPct = transparencyPct.coerceIn(0, 100)
+        host.view.alpha = if (enabled) clockBackgroundTransparencyPct / 100f else 1f
         updateClockBackgroundBlur()
         if (enabled) scheduleRenderedClockBoundsCapture()
     }
 
     private fun updateClockBackgroundBlur() {
         val bounds = renderedClockContentBounds
-        if (!clockBackgroundBlurEnabled || bounds.isEmpty || width <= 0 || height <= 0) {
+        if (!clockBackgroundBlurEnabled || bounds.isEmpty || renderedClockShapePath.isEmpty
+                || width <= 0 || height <= 0) {
             clockBackgroundBlurDrawable?.apply {
                 setVisible(false, false)
                 setBlurRadius(0)
@@ -378,53 +379,27 @@ abstract class AxClockView @JvmOverloads constructor(
             }
             ?: return
         val layers = clockBackgroundLayers ?: run {
-            val tint = GradientDrawable().apply { shape = GradientDrawable.RECTANGLE }
-            clockBackgroundTintDrawable = tint
             val newLayers = if (originalBackground == null) {
-                LayerDrawable(arrayOf(blurDrawable, tint))
+                clockBackgroundBlurLayerIndex = 0
+                LayerDrawable(arrayOf(blurDrawable))
             } else {
                 clockBackgroundBlurLayerIndex = 1
-                clockBackgroundTintLayerIndex = 2
-                LayerDrawable(arrayOf(originalBackground.mutate(), blurDrawable, tint))
+                LayerDrawable(arrayOf(originalBackground.mutate(), blurDrawable))
             }
             newLayers.also { clockBackgroundLayers = it }
         }
 
-        val density = resources.displayMetrics.density
-        val horizontalInset = (bounds.left - 20f * density).toInt().coerceAtLeast(0)
-        val topInset = (bounds.top - 10f * density).toInt().coerceAtLeast(0)
-        val rightInset = (width - bounds.right - 20f * density).toInt().coerceAtLeast(0)
-        val bottomInset = (height - bounds.bottom - 10f * density).toInt().coerceAtLeast(0)
-        layers.setLayerInset(
-            clockBackgroundBlurLayerIndex,
-            horizontalInset,
-            topInset,
-            rightInset,
-            bottomInset,
-        )
-        layers.setLayerInset(
-            clockBackgroundTintLayerIndex,
-            horizontalInset,
-            topInset,
-            rightInset,
-            bottomInset,
-        )
+        // The blur drawable occupies the whole clock view; its custom path clips the actual
+        // backdrop blur to the rendered clock glyphs. No rounded panel or padding is added.
+        layers.setLayerInset(clockBackgroundBlurLayerIndex, 0, 0, 0, 0)
 
-        val cornerRadius = 24f * density
+        val density = resources.displayMetrics.density
         val blurRadius = (48f * density * clockBackgroundBlurRadiusPct / 100f).toInt()
-        blurDrawable.setCornerRadius(cornerRadius)
+        blurDrawable.setPath(renderedClockShapePath)
         blurDrawable.setColor(AndroidColor.TRANSPARENT)
+        blurDrawable.setAlpha(255)
         blurDrawable.setBlurRadius(blurRadius)
         blurDrawable.setVisible(blurRadius > 0, false)
-
-        val surfaceColor = context.getColor(
-            com.android.internal.R.color.materialColorSurfaceContainerHigh,
-        )
-        val tintAlpha = ((100 - clockBackgroundTransparencyPct) * 255 / 100)
-        clockBackgroundTintDrawable?.apply {
-            setColor((surfaceColor and 0x00ffffff) or (tintAlpha shl 24))
-            setCornerRadius(cornerRadius)
-        }
         if (background !== layers) setBackground(layers)
         invalidate()
     }
@@ -572,6 +547,35 @@ abstract class AxClockView @JvmOverloads constructor(
             renderedClockPixels = IntArray(pixelCount)
         }
         bitmap.getPixels(renderedClockPixels, 0, bitmapWidth, 0, 0, bitmapWidth, bitmapHeight)
+
+        val glyphMask = Path()
+        glyphMask.fillType = Path.FillType.WINDING
+        for (y in 0 until bitmapHeight) {
+            var x = 0
+            while (x < bitmapWidth) {
+                while (x < bitmapWidth &&
+                    (renderedClockPixels[y * bitmapWidth + x] ushr 24) <=
+                        CLOCK_EDIT_ALPHA_THRESHOLD) {
+                    x++
+                }
+                val runStart = x
+                while (x < bitmapWidth &&
+                    (renderedClockPixels[y * bitmapWidth + x] ushr 24) >
+                        CLOCK_EDIT_ALPHA_THRESHOLD) {
+                    x++
+                }
+                if (runStart < x) {
+                    glyphMask.addRect(
+                        runStart.toFloat(), y.toFloat(), x.toFloat(), (y + 1).toFloat(),
+                        Path.Direction.CW,
+                    )
+                }
+            }
+        }
+        // The same-direction scanline rectangles already describe the filled mask.
+        // Unioning the mask with itself is redundant and can stall Skia's path-op
+        // coincidence handling on the UI thread (observed in a SystemUI ANR).
+        renderedClockShapePath.set(glyphMask)
 
         var left = bitmapWidth
         var top = bitmapHeight

@@ -1,0 +1,21 @@
+axion_wide.ttf is the existing ROM's OPPOBigClock06.ttf resource, copied from
+packages/SystemUI/customization/assets/oplus_clocks/fonts/OPPOBigClock06.ttf.
+No font conversion or new font download was performed. Preserve upstream asset
+licensing/provenance when distributing this module. Clock measurement and deck
+geometry adaptations originate in AxionOS source under Apache-2.0.
+
+Additional clock faces (2026-10-10), copied unchanged from fonts the ROM already ships:
+  axion_bold.ttf  <- packages/SystemUI/customization/assets/oplus_clocks/fonts/OPPOBigClock01.ttf
+  serif.ttf       <- .../oplus_clocks/NuovoRomaSerif.ttf
+  rounded.ttf     <- .../oplus_clocks/OPPODigit01.ttf
+  stripes.ttf     <- .../oplus_clocks/OPPODigit04.ttf
+  soft.ttf        <- .../oplus_clocks/OPPODigit06.ttf
+  thin.ttf        <- .../oplus_clocks/OPPODigit08.ttf
+  italic.ttf      <- .../oplus_clocks/OPPOGaladaRegularExport.ttf
+  bubble.ttf      <- .../oplus_clocks/OPPOModakHeavyExport.ttf
+  brush.ttf       <- .../oplus_clocks/OPPOShenqiRegularExport.ttf
+  playfair.ttf    <- packages/SystemUI/res-keyguard/font/PlayfairDisplay.ttf
+  bebas.ttf       <- packages/SystemUI/res-keyguard/font/bebasneue_bold.ttf
+  outline.otf     <- packages/SystemUI/res-keyguard/font/Hollow.otf
+  pixel.ttf       <- packages/SystemUI/res-keyguard/font/LightPixel.ttf
+  heavy.otf       <- packages/SystemUI/res-keyguard/font/Gobold.otf

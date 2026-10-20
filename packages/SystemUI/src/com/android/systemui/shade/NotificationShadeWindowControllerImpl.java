@@ -120,6 +120,8 @@ public class NotificationShadeWindowControllerImpl implements NotificationShadeW
     private final long mLockScreenDisplayTimeout;
     private final float mKeyguardPreferredRefreshRate; // takes precedence over max
     private final float mKeyguardMaxRefreshRate;
+    /** Rime: the always-on display runs at the panel's lowest rate, not the 120 Hz default. */
+    private final float mDozeRefreshRate;
     private final KeyguardViewMediator mKeyguardViewMediator;
     private final KeyguardBypassController mKeyguardBypassController;
     private final Executor mBackgroundExecutor;
@@ -228,6 +230,19 @@ public class NotificationShadeWindowControllerImpl implements NotificationShadeW
         // know that we're not falsing (because we unlocked.)
         mKeyguardMaxRefreshRate = context.getResources()
                 .getInteger(R.integer.config_keyguardMaxRefreshRate);
+        float lowestRefreshRate = -1;
+        Display display = context.getDisplay();
+        if (display != null) {
+            Display.Mode current = display.getMode();
+            for (Display.Mode mode : display.getSupportedModes()) {
+                if (mode.getPhysicalWidth() != current.getPhysicalWidth()
+                        || mode.getPhysicalHeight() != current.getPhysicalHeight()) continue;
+                if (lowestRefreshRate < 0 || mode.getRefreshRate() < lowestRefreshRate) {
+                    lowestRefreshRate = mode.getRefreshRate();
+                }
+            }
+        }
+        mDozeRefreshRate = lowestRefreshRate;
         mTopUiController = topUiController;
     }
 
@@ -436,7 +451,12 @@ public class NotificationShadeWindowControllerImpl implements NotificationShadeW
             mLpChanged.privateFlags &= ~LayoutParams.SYSTEM_FLAG_HIDE_NON_SYSTEM_OVERLAY_WINDOWS;
         }
 
-        if (mKeyguardPreferredRefreshRate > 0) {
+        if (state.dozing && mDozeRefreshRate > 0) {
+            mLpChanged.preferredMaxDisplayRefreshRate = mDozeRefreshRate;
+            mLpChanged.preferredMinDisplayRefreshRate = mDozeRefreshRate;
+            Trace.setCounter("display_set_preferred_refresh_rate",
+                    (long) mLpChanged.preferredMaxDisplayRefreshRate);
+        } else if (mKeyguardPreferredRefreshRate > 0) {
             boolean onKeyguard = state.statusBarState == StatusBarState.KEYGUARD
                     && !state.keyguardFadingAway && !state.keyguardGoingAway;
             if (onKeyguard
@@ -456,6 +476,7 @@ public class NotificationShadeWindowControllerImpl implements NotificationShadeW
             Trace.setCounter("display_set_preferred_refresh_rate",
                     (long) mLpChanged.preferredMaxDisplayRefreshRate);
         } else if (mKeyguardMaxRefreshRate > 0) {
+            mLpChanged.preferredMinDisplayRefreshRate = 0;
             boolean bypassOnKeyguard = mKeyguardBypassController.getBypassEnabled()
                     && state.statusBarState == StatusBarState.KEYGUARD
                     && !state.keyguardFadingAway && !state.keyguardGoingAway;
@@ -466,6 +487,9 @@ public class NotificationShadeWindowControllerImpl implements NotificationShadeW
             }
             Trace.setCounter("display_max_refresh_rate",
                     (long) mLpChanged.preferredMaxDisplayRefreshRate);
+        } else {
+            mLpChanged.preferredMaxDisplayRefreshRate = 0;
+            mLpChanged.preferredMinDisplayRefreshRate = 0;
         }
 
         if (state.bouncerShowing) {
