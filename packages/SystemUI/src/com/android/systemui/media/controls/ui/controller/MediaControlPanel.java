@@ -66,7 +66,6 @@ import android.widget.TextView;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
-import androidx.annotation.UiThread;
 import androidx.constraintlayout.widget.ConstraintSet;
 
 import com.android.app.animation.Interpolators;
@@ -324,6 +323,10 @@ public class MediaControlPanel {
      * Clean up seekbar and controller when panel is destroyed
      */
     public void onDestroy() {
+        if (mController != null) {
+            mController.unregisterCallback(mCb);
+            mController = null;
+        }
         if (mSeekBarObserver != null) {
             mSeekBarViewModel.getProgress().removeObserver(mSeekBarObserver);
         }
@@ -514,6 +517,9 @@ public class MediaControlPanel {
             mToken = token;
         }
 
+        if (mController != null) {
+            mController.unregisterCallback(mCb);
+        }
         if (mToken != null) {
             mController = new MediaController(mContext, mToken);
             mController.registerCallback(mCb);
@@ -1515,12 +1521,16 @@ public class MediaControlPanel {
     /**
      * Scale artwork to fill the background of the panel
      */
-    @UiThread
-    private Drawable getScaledBackground(Icon icon, int width, int height) {
+    @Nullable
+    private Drawable getScaledBackground(@Nullable Icon icon, int width, int height) {
         if (icon == null) {
             return null;
         }
         Drawable drawable = icon.loadDrawable(mContext);
+        if (drawable == null) {
+            Log.w(TAG, "Failed to load artwork drawable");
+            return null;
+        }
         Rect bounds = new Rect(0, 0, width, height);
         if (bounds.width() > width || bounds.height() > height) {
             float offsetX = (bounds.width() - width) / 2.0f;
@@ -1591,7 +1601,7 @@ public class MediaControlPanel {
      private final MediaController.Callback mCb = new MediaController.Callback() { 
          @Override 
          public void onMetadataChanged(MediaMetadata metadata) { 
-            if (metadata != null) { 
+            if (metadata != null && mMediaViewHolder != null) { 
                  String title = metadata.getString(MediaMetadata.METADATA_KEY_TITLE); 
                  String artist = metadata.getString(MediaMetadata.METADATA_KEY_ARTIST); 
                  mMediaViewHolder.getTitleText().setText(title); 
