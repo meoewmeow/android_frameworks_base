@@ -34,8 +34,14 @@ class RimeFailureGuard @Inject constructor(
     private val watchdog = Handler(watchdogThread.looper)
 
     init {
-        // Includes native death/ANR and interrupted sessions: retry requires an explicit reset.
-        if (preferences.getBoolean("armed", false)) trip("unclean previous activation", null)
+        // Armed in this same boot means SystemUI died while Rime was up (native death/ANR,
+        // interrupted session): retry requires an explicit reset. Armed in an earlier boot is a
+        // reboot or power-off while the lock screen showed, which is not a failure.
+        if (preferences.getBoolean("armed", false)) {
+            // Uptime only grows within a boot, so a smaller value than at arming means a reboot.
+            if (SystemClock.elapsedRealtime() >= preferences.getLong("armedAt", Long.MAX_VALUE)) trip("unclean previous activation", null)
+            else preferences.edit().putBoolean("armed", false).commit()
+        }
         if (failed.get()) disableRequest()
         watchdog.post(object : Runnable {
             override fun run() {
@@ -56,7 +62,7 @@ class RimeFailureGuard @Inject constructor(
     fun arm(): Boolean {
         if (isFailed) return false
         if (active.get()) return true
-        if (!preferences.edit().putBoolean("armed", true).commit()) {
+        if (!preferences.edit().putBoolean("armed", true).putLong("armedAt", SystemClock.elapsedRealtime()).commit()) {
             trip("cannot persist activation", null); return false
         }
         acknowledgement = SystemClock.uptimeMillis()
@@ -69,10 +75,12 @@ class RimeFailureGuard @Inject constructor(
     }
     fun resetIfRequested() {
         val nonce = Settings.Secure.getIntForUser(context.contentResolver, RESET_KEY, 0, UserHandle.USER_CURRENT)
-        if (nonce <= preferences.getInt("resetNonce", 0)) return
-        // Explicit operator reset is separate from enabling; automatic retries cannot clear it.
+        // A trip always switches Rime off, so the switch reading on again means the user turned it
+        // back on: that is an explicit reset too. Automatic retries cannot clear it.
+        val reenabled = Settings.Secure.getIntForUser(context.contentResolver, ENABLE_KEY, 0, UserHandle.USER_CURRENT) != 0
+        if (nonce <= preferences.getInt("resetNonce", 0) && !reenabled) return
         active.set(false)
-        if (preferences.edit().putBoolean("failed", false).putBoolean("armed", false).putInt("resetNonce", nonce).commit()) failed.set(false)
+        if (preferences.edit().putBoolean("failed", false).putBoolean("armed", false).putInt("resetNonce", maxOf(nonce, preferences.getInt("resetNonce", 0))).commit()) failed.set(false)
     }
     fun <T> run(stage: String, block: () -> T): T? {
         if (isFailed) return null

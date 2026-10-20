@@ -81,6 +81,8 @@ class RimeLockscreenController @Inject constructor(
     private var customizing = false
     private var observing = false
     private var initializationStartedAt = 0L
+    private val firstFrameToken = Any()
+    private var firstFrameAwaitsWake = false
     /**
      * Native notifications: Android's own rows in its own lock screen deck instead of Rime's deck.
      * Secure rime_native_notifications, on by default; off restores Rime's deck.
@@ -278,17 +280,14 @@ class RimeLockscreenController @Inject constructor(
             hostProvider.get().setNativeNotifications(nativeNotifications)
             hostProvider.get().setHostedClock(hostedClock, ClockSettingsRepository.clockId.value, null)
             initializationStartedAt = SystemClock.uptimeMillis()
+            firstFrameAwaitsWake = false
             view.prepareToShow()
             view.visibility = View.VISIBLE
-            handler.postDelayed({
-                if (surface === view && view.visibility == View.VISIBLE && !view.hasRenderedFrame && !guard.isFailed)
-                    guard.trip("first frame timeout", null)
-            }, 3000L)
         }
         if (isShowing) { hostProvider.get().setDozing(status.isDozing); updateTilt() }
         // Do not conceal native content until a presentation frame has actually drawn.
         if (surface?.hasRenderedFrame != true) {
-            if (SystemClock.uptimeMillis() - initializationStartedAt > 3000L) guard.trip("first frame timeout", null)
+            checkFirstFrame(view)
             return
         }
         isShowing = true
@@ -420,6 +419,23 @@ class RimeLockscreenController @Inject constructor(
         view.alpha = 1f; view.scaleX = 1f; view.scaleY = 1f
         refreshBlurRegions(view)
     }
+    /**
+     * Trips the guard if the surface is shown but never draws. Time with the screen off or dozing
+     * does not count: the keyguard is often created while the display is off (locking from an
+     * app), and nothing draws until it wakes. No polling while dozing (it would wake the CPU all
+     * night); waking redraws the window, whose pre-draw pass calls this again. Awake, it keeps
+     * polling so the timeout still fires if the window stops redrawing.
+     */
+    private fun checkFirstFrame(view: RimeProtectedSurface) {
+        handler.removeCallbacksAndMessages(firstFrameToken)
+        if (surface !== view || view.visibility != View.VISIBLE || view.hasRenderedFrame || guard.isFailed) return
+        val now = SystemClock.uptimeMillis()
+        if (status.isDozing) { firstFrameAwaitsWake = true; return }
+        // Count from the wake, not from when the surface was shown on a dark screen.
+        if (firstFrameAwaitsWake) { firstFrameAwaitsWake = false; initializationStartedAt = now }
+        if (now - initializationStartedAt > FIRST_FRAME_TIMEOUT_MS) { guard.trip("first frame timeout", null); return }
+        handler.postAtTime({ checkFirstFrame(view) }, firstFrameToken, now + FIRST_FRAME_POLL_MS)
+    }
     private fun suspendSkin() {
         unlocking = false
         runCatching { stopTilt() }
@@ -549,6 +565,8 @@ class RimeLockscreenController @Inject constructor(
 }
 
 private const val UNLOCK_FADE_MS = 200L
+private const val FIRST_FRAME_TIMEOUT_MS = 3000L
+private const val FIRST_FRAME_POLL_MS = 500L
 private const val NATIVE_NOTIFICATIONS_KEY = "rime_native_notifications"
 private const val AOD_CLOCK_KEY = "rime_aod_clock"
 // Same values as AxWallpaperEffects' CinematicService / CinematicRenderer / cinematic_frag.glsl.
