@@ -7,6 +7,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import dev.rime.ui.models.UiClockState
@@ -37,7 +38,7 @@ object DefaultLockscreenContentRenderer : LockscreenContentRenderer {
         editing: Boolean, onEdit: () -> Unit, onGestureStarted: () -> Unit,
         onGestureFinished: (Boolean) -> Unit, onMove: (Float, Float) -> Unit,
         onResize: (Float, Float) -> Unit, onEditDate: () -> Unit, modifier: Modifier) {
-        if (content.hostedClock) { HostedClockSlot(content, height, editing, modifier); return }
+        if (content.hostedClock) { HostedClockSlot(content, height, editing, modifier, onEdit); return }
         AxionClock(clock, appearance, foreground, blurRadiusDp, height, referenceHeight,
             editing, onEdit, onMove, onResize, onGestureStarted, onGestureFinished, modifier,
             canResize = content.supportsHeightResize, onEditDate = onEditDate,
@@ -51,16 +52,19 @@ object DefaultLockscreenContentRenderer : LockscreenContentRenderer {
 
 /**
  * The slot an Axion clock face occupies. The lock screen's host draws the real face there; the
- * editor, which cannot, outlines it and names the face.
+ * editor, which cannot, outlines it and names the face; tapping it opens the clock sheet, where
+ * picking a Rime face switches back from Axion's.
  */
 @Composable
-fun HostedClockSlot(content: UiLockscreenContent, height: Dp, editing: Boolean, modifier: Modifier) {
+fun HostedClockSlot(content: UiLockscreenContent, height: Dp, editing: Boolean, modifier: Modifier, onEdit: () -> Unit = {}) {
     androidx.compose.foundation.layout.Box(modifier.then(Modifier
-        .fillMaxWidth().height(height)), contentAlignment = androidx.compose.ui.Alignment.Center) {
+        .fillMaxWidth().height(height))
+        .then(if (editing) Modifier.clickable(role = androidx.compose.ui.semantics.Role.Button, onClick = onEdit) else Modifier),
+        contentAlignment = androidx.compose.ui.Alignment.Center) {
         if (editing) {
             androidx.compose.foundation.layout.Box(Modifier.matchParentSize().border(1.5.dp, Color.White.copy(alpha = 0.55f),
                 androidx.compose.foundation.shape.RoundedCornerShape(16.dp)))
-            androidx.compose.foundation.text.BasicText((content.hostedClockName ?: "Axion clock") + "\nchange it in Axion clocks",
+            androidx.compose.foundation.text.BasicText((content.hostedClockName ?: "Axion clock") + "\ntap to change",
                 style = androidx.compose.ui.text.TextStyle(color = Color.White, fontSize = 15.sp,
                     textAlign = androidx.compose.ui.text.style.TextAlign.Center))
         }
