@@ -26,6 +26,7 @@ import android.graphics.Color;
 import android.graphics.ColorFilter;
 import android.graphics.Paint;
 import android.graphics.Path;
+import android.graphics.PathIterator;
 import android.graphics.PixelFormat;
 import android.graphics.PorterDuff;
 import android.graphics.PorterDuffXfermode;
@@ -50,12 +51,18 @@ public final class BackgroundBlurDrawable extends Drawable {
 
     private static final String TAG = BackgroundBlurDrawable.class.getSimpleName();
     private static final boolean DEBUG = Log.isLoggable(TAG, Log.DEBUG);
+    private static final int MAX_CUSTOM_PATH_DATA_FLOATS = 16384;
 
     private final Aggregator mAggregator;
     private final RenderNode mRenderNode;
     private final Paint mPaint = new Paint();
     private final Path mRectPath = new Path();
+    private final Path mCustomPath = new Path();
     private final float[] mTmpRadii = new float[8];
+    private float[] mCustomPathData = new float[0];
+    private boolean mHasCustomPath;
+    private boolean mCustomPathDataValid = true;
+    private int mCustomPathGenerationId = -1;
 
     private boolean mVisible = true;
 
@@ -104,7 +111,8 @@ public final class BackgroundBlurDrawable extends Drawable {
 
     @Override
     public void draw(@NonNull Canvas canvas) {
-        if (mRectPath.isEmpty() || !isVisible() || getAlpha() == 0) {
+        if (mRectPath.isEmpty() || !isVisible() || getAlpha() == 0 ||
+                !mCustomPathDataValid) {
             return;
         }
 
@@ -179,11 +187,87 @@ public final class BackgroundBlurDrawable extends Drawable {
         }
     }
 
+    /**
+     * Sets a custom blur mask in drawable-local coordinates. Pass {@code null} to use the
+     * drawable's rounded-rectangle bounds instead.
+     */
+    public void setPath(@Nullable Path path) {
+        if (path == null) {
+            if (!mHasCustomPath) return;
+            mHasCustomPath = false;
+            mCustomPathDataValid = true;
+            mCustomPathGenerationId = -1;
+            mCustomPath.reset();
+            mCustomPathData = new float[0];
+        } else {
+            int generationId = path.getGenerationId();
+            if (mHasCustomPath && mCustomPathGenerationId == generationId) return;
+            mHasCustomPath = true;
+            mCustomPathGenerationId = generationId;
+            mCustomPath.set(path);
+            float[] pathData = serializePath(path);
+            mCustomPathDataValid = pathData != null
+                    && path.getFillType() != Path.FillType.INVERSE_WINDING
+                    && path.getFillType() != Path.FillType.INVERSE_EVEN_ODD;
+            mCustomPathData = mCustomPathDataValid ? pathData : new float[0];
+        }
+        updatePath();
+        invalidateSelf();
+        mAggregator.onBlurDrawableUpdated(this);
+    }
+
+    private static float[] serializePath(Path path) {
+        PathIterator iterator = path.getPathIterator();
+        float[] points = new float[8];
+        int size = 0;
+        while (iterator.hasNext()) {
+            int verb = iterator.next(points, 0);
+            size += 1 + pathPointCount(verb);
+            if (size > MAX_CUSTOM_PATH_DATA_FLOATS) return null;
+        }
+
+        float[] pathData = new float[size];
+        iterator = path.getPathIterator();
+        int offset = 0;
+        while (iterator.hasNext()) {
+            int verb = iterator.next(points, 0);
+            pathData[offset++] = verb;
+            int pointCount = pathPointCount(verb);
+            System.arraycopy(points, 0, pathData, offset, pointCount);
+            offset += pointCount;
+        }
+        return pathData;
+    }
+
+    private static int pathPointCount(int verb) {
+        switch (verb) {
+            case PathIterator.VERB_MOVE:
+                return 2;
+            case PathIterator.VERB_LINE:
+                return 4;
+            case PathIterator.VERB_QUAD:
+                return 6;
+            case PathIterator.VERB_CONIC:
+                return 7;
+            case PathIterator.VERB_CUBIC:
+                return 8;
+            case PathIterator.VERB_CLOSE:
+                return 0;
+            default:
+                throw new IllegalArgumentException("Unsupported path verb " + verb);
+        }
+    }
+
     @Override
     public void setBounds(int left, int top, int right, int bottom) {
+        int oldWidth = getBounds().width();
+        int oldHeight = getBounds().height();
         super.setBounds(left, top, right, bottom);
         mRenderNode.setPosition(left, top, right, bottom);
         updatePath();
+        if (oldWidth != getBounds().width() || oldHeight != getBounds().height()) {
+            mAggregator.onBlurDrawableUpdated(this);
+        }
     }
 
     private void updatePath() {
@@ -196,8 +280,12 @@ public final class BackgroundBlurDrawable extends Drawable {
             return;
         }
         Rect bounds = getBounds();
-        mRectPath.addRoundRect(bounds.left, bounds.top, bounds.right, bounds.bottom, mTmpRadii,
-                Path.Direction.CW);
+        if (mHasCustomPath) {
+            mRectPath.set(mCustomPath);
+        } else {
+            mRectPath.addRoundRect(bounds.left, bounds.top, bounds.right, bounds.bottom, mTmpRadii,
+                    Path.Direction.CW);
+        }
     }
 
     @Override
@@ -260,7 +348,9 @@ public final class BackgroundBlurDrawable extends Drawable {
         @UiThread
         void onBlurDrawableUpdated(BackgroundBlurDrawable drawable) {
             final boolean shouldBeDrawn =
-                    drawable.mAlpha != 0 && drawable.mBlurRadius > 0 && drawable.mVisible;
+                    drawable.mAlpha != 0 && drawable.mBlurRadius > 0 && drawable.mVisible &&
+                    drawable.mCustomPathDataValid &&
+                    (!drawable.mHasCustomPath || !drawable.mCustomPath.isEmpty());
             final boolean isDrawn = mDrawables.contains(drawable);
             if (shouldBeDrawn) {
                 mHasUiUpdates = true;
@@ -437,6 +527,12 @@ public final class BackgroundBlurDrawable extends Drawable {
         public final float cornerRadiusBR;
         public final float alpha;
         public final Rect rect;
+        public final boolean hasPath;
+        public final int pathFillType;
+        public final float pathBaseWidth;
+        public final float pathBaseHeight;
+        private final float[] pathData;
+        private final float[] floatArray;
 
         BlurRegion(BackgroundBlurDrawable drawable) {
             alpha = drawable.mAlpha;
@@ -446,23 +542,34 @@ public final class BackgroundBlurDrawable extends Drawable {
             cornerRadiusBL = drawable.mCornerRadiusBL;
             cornerRadiusBR = drawable.mCornerRadiusBR;
             rect = drawable.mRect;
+            hasPath = drawable.mHasCustomPath;
+            pathFillType = drawable.mCustomPath.getFillType().ordinal();
+            pathBaseWidth = drawable.getBounds().width();
+            pathBaseHeight = drawable.getBounds().height();
+            pathData = drawable.mCustomPathData.clone();
+            floatArray = new float[15 + pathData.length];
+            floatArray[0] = blurRadius;
+            floatArray[1] = alpha;
+            floatArray[6] = cornerRadiusTL;
+            floatArray[7] = cornerRadiusTR;
+            floatArray[8] = cornerRadiusBL;
+            floatArray[9] = cornerRadiusBR;
+            floatArray[10] = hasPath ? 1 : 0;
+            floatArray[11] = pathFillType;
+            floatArray[12] = pathBaseWidth;
+            floatArray[13] = pathBaseHeight;
+            floatArray[14] = pathData.length;
+            System.arraycopy(pathData, 0, floatArray, 15, pathData.length);
         }
 
         /**
          * Serializes this class into a float array that's more JNI friendly.
          */
         float[] toFloatArray() {
-            final float[] floatArray = new float[10];
-            floatArray[0] = blurRadius;
-            floatArray[1] = alpha;
             floatArray[2] = rect.left;
             floatArray[3] = rect.top;
             floatArray[4] = rect.right;
             floatArray[5] = rect.bottom;
-            floatArray[6] = cornerRadiusTL;
-            floatArray[7] = cornerRadiusTR;
-            floatArray[8] = cornerRadiusBL;
-            floatArray[9] = cornerRadiusBR;
             return floatArray;
         }
 

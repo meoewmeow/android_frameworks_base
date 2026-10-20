@@ -64,7 +64,9 @@
 #include <utils/Log.h>
 #include <utils/String16.h>
 
+#include <cmath>
 #include <memory>
+#include <utility>
 
 #include "android_hardware_input_InputWindowHandle.h"
 #include "android_os_Parcel.h"
@@ -899,6 +901,16 @@ static void nativeSetBlurRegions(JNIEnv* env, jclass clazz, jlong transactionObj
     float region[10];
     for (int i = 0; i < size; i++) {
         jfloatArray regionArray = (jfloatArray)env->GetObjectArrayElement(regions, i);
+        const jsize regionLength = env->GetArrayLength(regionArray);
+        if (regionLength < 10) {
+            jniThrowException(env, IllegalArgumentException, "Blur region is too short");
+            return;
+        }
+        if (regionLength > 10 && regionLength < 15) {
+            jniThrowException(env, IllegalArgumentException,
+                              "Blur region path header is incomplete");
+            return;
+        }
         env->GetFloatArrayRegion(regionArray, 0, 10, region);
         float blurRadius = region[0];
         float alpha = region[1];
@@ -911,16 +923,80 @@ static void nativeSetBlurRegions(JNIEnv* env, jclass clazz, jlong transactionObj
         float cornerRadiusBL = region[8];
         float cornerRadiusBR = region[9];
 
-        blurRegionVector.push_back(BlurRegion{.blurRadius = static_cast<uint32_t>(blurRadius),
-                                              .cornerRadiusTL = cornerRadiusTL,
-                                              .cornerRadiusTR = cornerRadiusTR,
-                                              .cornerRadiusBL = cornerRadiusBL,
-                                              .cornerRadiusBR = cornerRadiusBR,
-                                              .alpha = alpha,
-                                              .left = static_cast<int>(left),
-                                              .top = static_cast<int>(top),
-                                              .right = static_cast<int>(right),
-                                              .bottom = static_cast<int>(bottom)});
+        BlurRegion blurRegion{.blurRadius = static_cast<uint32_t>(blurRadius),
+                              .cornerRadiusTL = cornerRadiusTL,
+                              .cornerRadiusTR = cornerRadiusTR,
+                              .cornerRadiusBL = cornerRadiusBL,
+                              .cornerRadiusBR = cornerRadiusBR,
+                              .alpha = alpha,
+                              .left = static_cast<int>(left),
+                              .top = static_cast<int>(top),
+                              .right = static_cast<int>(right),
+                              .bottom = static_cast<int>(bottom)};
+
+        if (regionLength >= 15) {
+            float pathDataCountValue;
+            env->GetFloatArrayRegion(regionArray, 14, 1, &pathDataCountValue);
+            if (!std::isfinite(pathDataCountValue) || pathDataCountValue < 0.0f ||
+                    pathDataCountValue > 16384.0f ||
+                    pathDataCountValue != std::floor(pathDataCountValue)) {
+                jniThrowException(env, IllegalArgumentException,
+                                  "Invalid blur region path data length");
+                return;
+            }
+            const int pathDataCount = static_cast<int>(pathDataCountValue);
+            if (regionLength != 15 + pathDataCount) {
+                jniThrowException(env, IllegalArgumentException,
+                                  "Invalid blur region path data length");
+                return;
+            }
+            float pathHeader[4];
+            env->GetFloatArrayRegion(regionArray, 10, 4, pathHeader);
+            blurRegion.hasPath = pathHeader[0] != 0.0f;
+            if (pathHeader[0] != 0.0f && pathHeader[0] != 1.0f) {
+                jniThrowException(env, IllegalArgumentException,
+                                  "Invalid blur region path flag");
+                return;
+            }
+            if (blurRegion.hasPath) {
+                if (pathDataCount == 0) {
+                    jniThrowException(env, IllegalArgumentException,
+                                      "Blur region path is empty");
+                    return;
+                }
+                if (!std::isfinite(pathHeader[1]) || pathHeader[1] < 0.0f ||
+                        pathHeader[1] > 1.0f ||
+                        pathHeader[1] != std::floor(pathHeader[1]) ||
+                        !std::isfinite(pathHeader[2]) || pathHeader[2] <= 0.0f ||
+                        !std::isfinite(pathHeader[3]) || pathHeader[3] <= 0.0f) {
+                    jniThrowException(env, IllegalArgumentException,
+                                      "Invalid blur region path metadata");
+                    return;
+                }
+                blurRegion.pathFillType = static_cast<uint32_t>(pathHeader[1]);
+                blurRegion.pathBaseWidth = pathHeader[2];
+                blurRegion.pathBaseHeight = pathHeader[3];
+                blurRegion.pathData.resize(pathDataCount);
+                if (pathDataCount > 0) {
+                    env->GetFloatArrayRegion(regionArray, 15, pathDataCount,
+                                             blurRegion.pathData.data());
+                    for (float value : blurRegion.pathData) {
+                        if (!std::isfinite(value)) {
+                            jniThrowException(env, IllegalArgumentException,
+                                              "Blur region path contains a non-finite value");
+                            return;
+                        }
+                    }
+                }
+            } else if (pathDataCount != 0) {
+                jniThrowException(env, IllegalArgumentException,
+                                  "Path data provided without a blur region path");
+                return;
+            }
+        }
+
+        blurRegionVector.push_back(std::move(blurRegion));
+        env->DeleteLocalRef(regionArray);
     }
 
     transaction->setBlurRegions(ctrl, blurRegionVector);

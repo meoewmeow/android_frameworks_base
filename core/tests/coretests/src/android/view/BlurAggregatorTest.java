@@ -25,6 +25,8 @@ import static junit.framework.TestCase.assertNull;
 import static junit.framework.TestCase.assertTrue;
 
 import android.content.Context;
+import android.graphics.Path;
+import android.graphics.PathIterator;
 import android.platform.test.annotations.Presubmit;
 
 import androidx.test.ext.junit.runners.AndroidJUnit4;
@@ -187,6 +189,52 @@ public class BlurAggregatorTest {
         assertNotNull(blurRegionsForSf);
         assertEquals(1, blurRegionsForSf.length);
         assertEquals(50f, blurRegionsForSf[0][0]);
+    }
+
+    @Test
+    public void testCustomPathIsIncludedInBlurRegionPayload() {
+        mDrawable.setBounds(0, 0, 20, 12);
+        Path path = new Path();
+        path.addRect(2, 3, 8, 9, Path.Direction.CW);
+        mDrawable.setPath(path);
+
+        boolean hasUpdates = mAggregator.hasUpdates();
+        BlurRegion[] blurRegions = mAggregator.getBlurRegionsCopyForRT();
+        float[][] serialized = mAggregator.getBlurRegionsForFrameLocked(
+                TEST_FRAME_NUMBER, blurRegions, hasUpdates);
+
+        assertNotNull(serialized);
+        assertEquals(1, serialized.length);
+        assertEquals(1f, serialized[0][10]);
+        assertEquals(Path.FillType.WINDING.ordinal(), (int) serialized[0][11]);
+        assertEquals(20f, serialized[0][12]);
+        assertEquals(12f, serialized[0][13]);
+        assertTrue(serialized[0][14] > 0f);
+        assertEquals(PathIterator.VERB_MOVE, (int) serialized[0][15]);
+    }
+
+    @Test
+    public void testInverseCustomPathIsRejected() {
+        mDrawable.setBounds(0, 0, 20, 12);
+        Path path = new Path();
+        path.addRect(2, 3, 8, 9, Path.Direction.CW);
+        path.setFillType(Path.FillType.INVERSE_WINDING);
+        mDrawable.setPath(path);
+
+        assertEquals(0, mAggregator.getBlurRegionsCopyForRT().length);
+    }
+
+    @Test
+    public void testOversizedCustomPathIsRejectedBeforeSerialization() {
+        mDrawable.setBounds(0, 0, 200, 100);
+        Path path = new Path();
+        for (int i = 0; i < 1100; i++) {
+            path.addRect(i % 200, i / 200, i % 200 + 1, i / 200 + 1,
+                    Path.Direction.CW);
+        }
+        mDrawable.setPath(path);
+
+        assertEquals(0, mAggregator.getBlurRegionsCopyForRT().length);
     }
 
     @Test
