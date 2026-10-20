@@ -817,8 +817,12 @@ public abstract class ExpandableView extends FrameLayout implements Dumpable, Ro
         mViewState.notGoneIndex = -1;
         mViewState.setXTranslation(getTranslationX());
         mViewState.hidden = false;
-        mViewState.setScaleX(getScaleX());
-        mViewState.setScaleY(getScaleY());
+        // The lock screen deck is the only thing that scales rows. Seeding from a deck-scaled
+        // view would keep its back cards shrunk after leaving the keyguard (shade, QS), and give
+        // the deck a shrunk "list" size to expand to; a row the deck held starts at full size.
+        boolean wasInLockscreenStack = mViewState.lockscreenStackDepth >= 0;
+        mViewState.setScaleX(wasInLockscreenStack ? 1f : getScaleX());
+        mViewState.setScaleY(wasInLockscreenStack ? 1f : getScaleY());
         mViewState.inShelf = false;
         mViewState.headsUpIsVisible = false;
         mViewState.lockscreenStackDepth = -1;
