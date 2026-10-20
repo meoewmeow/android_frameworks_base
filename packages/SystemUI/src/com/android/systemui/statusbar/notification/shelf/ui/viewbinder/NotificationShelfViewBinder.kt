@@ -59,7 +59,7 @@ object NotificationShelfViewBinder {
     ) {
         try {
             shelf.setOnClickListener {
-                if (!shelf.expandBottomStackIfShowingMore()) viewModel.onShelfClicked()
+                viewModel.onShelfClicked()
             }
             awaitCancellation()
         } finally {

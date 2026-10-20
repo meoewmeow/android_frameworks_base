@@ -33,10 +33,13 @@ import static com.android.systemui.statusbar.notification.stack.StackStateAnimat
 
 import android.animation.ObjectAnimator;
 import android.content.res.Configuration;
+import android.database.ContentObserver;
 import android.graphics.Point;
 import android.graphics.RectF;
 import android.graphics.RenderEffect;
 import android.graphics.Shader;
+import android.os.Handler;
+import android.os.Looper;
 import android.os.Trace;
 import android.os.UserHandle;
 import android.provider.Settings;
@@ -156,6 +159,8 @@ public class NotificationStackScrollLayoutController implements Dumpable {
     private static final String TAG = "StackScrollerController";
     private static final boolean DEBUG = Log.isLoggable(TAG, Log.DEBUG);
     private static final String HIGH_PRIORITY = "high_priority";
+    private static final String LOCKSCREEN_STACK_EXPERIMENT_ENABLED =
+            "lockscreen_notification_stack_experiment_enabled";
     /** Delay in milli-seconds before shade closes for clear all. */
     private static final int DELAY_BEFORE_SHADE_CLOSE = 200;
 
@@ -207,6 +212,13 @@ public class NotificationStackScrollLayoutController implements Dumpable {
 
     private final NotificationTargetsHelper mNotificationTargetsHelper;
     private final SecureSettings mSecureSettings;
+    private final ContentObserver mLockscreenStackExperimentObserver =
+            new ContentObserver(new Handler(Looper.getMainLooper())) {
+                @Override
+                public void onChange(boolean selfChange) {
+                    updateLockscreenStackExperimentEnabled();
+                }
+            };
     private final NotificationDismissibilityProvider mDismissibilityProvider;
     private final ActivityStarter mActivityStarter;
     private final SensitiveNotificationProtectionController
@@ -223,6 +235,10 @@ public class NotificationStackScrollLayoutController implements Dumpable {
                 @Override
                 public void onViewAttachedToWindow(View v) {
                     mColorUpdateLogger.logTriggerEvent("NSSLC.onViewAttachedToWindow()");
+                    mSecureSettings.registerContentObserverForUserAsync(
+                            LOCKSCREEN_STACK_EXPERIMENT_ENABLED,
+                            mLockscreenStackExperimentObserver, UserHandle.USER_ALL);
+                    updateLockscreenStackExperimentEnabled();
                     mConfigurationController.addCallback(mConfigurationListener);
                     final int newBarState = mStatusBarStateController.getState();
                     if (newBarState != mBarState) {
@@ -236,6 +252,8 @@ public class NotificationStackScrollLayoutController implements Dumpable {
                 @Override
                 public void onViewDetachedFromWindow(View v) {
                     mColorUpdateLogger.logTriggerEvent("NSSLC.onViewDetachedFromWindow()");
+                    mSecureSettings.unregisterContentObserverAsync(
+                            mLockscreenStackExperimentObserver);
                     mConfigurationController.removeCallback(mConfigurationListener);
                     mStatusBarStateController.removeCallback(mStateListener);
                     mTunerService.removeTunable(mTunable);
@@ -1040,6 +1058,12 @@ public class NotificationStackScrollLayoutController implements Dumpable {
         }
     };
 
+    private void updateLockscreenStackExperimentEnabled() {
+        // The persisted experiment setting stays retired; only Rime's lock screen turns the deck
+        // on, while it shows native notifications (RimeLockscreenController).
+        mView.setLockscreenStackExperimentEnabled(NotificationStackScrollLayout.isRimeStackEnabled());
+    }
+
     public void setApplyHunTranslation(boolean apply) {
         mView.setApplyHunTranslation(apply);
     }
@@ -1393,10 +1417,10 @@ public class NotificationStackScrollLayoutController implements Dumpable {
         mView.updateTopPadding(qsHeight, animate);
     }
 
-    public void setLockscreenBottomStackBounds(float top, float bottom, boolean onLockscreen,
+    public void setLockscreenStackBounds(float top, float bottom, boolean onLockscreen,
             boolean animate) {
         SceneContainerFlag.assertInLegacyMode();
-        mView.setLockscreenBottomStackBounds(top, bottom, onLockscreen, animate);
+        mView.setLockscreenStackBounds(top, bottom, onLockscreen, animate);
     }
 
     public boolean isScrolledToBottom() {
@@ -2161,6 +2185,14 @@ public class NotificationStackScrollLayoutController implements Dumpable {
         @Override
         public boolean onInterceptTouchEvent(MotionEvent ev) {
             mView.initDownStates(ev);
+            boolean prioritizeStackGesture = mView.shouldPrioritizeLockscreenStackGesture();
+            if (prioritizeStackGesture
+                    && mLongPressedView == null
+                    && !mSwipeHelper.isSwiping()
+                    && !mView.isExpandingNotification()
+                    && mView.onInterceptLockscreenStackGesture(ev)) {
+                return true;
+            }
             mView.handleEmptySpaceClick(ev);
 
             boolean skipForDragging = SceneContainerFlag.isEnabled() && mView.isBeingDragged()
@@ -2176,6 +2208,14 @@ public class NotificationStackScrollLayoutController implements Dumpable {
             if (mLongPressedView == null && !mSwipeHelper.isSwiping()
                     && !mView.getOnlyScrollingInThisMotion() && guts == null && !skipForDragging) {
                 expandWantsIt = mView.getExpandHelper().onInterceptTouchEvent(ev);
+            }
+            if (!prioritizeStackGesture
+                    && !expandWantsIt
+                    && mLongPressedView == null
+                    && !mSwipeHelper.isSwiping()
+                    && !mView.isExpandingNotification()
+                    && mView.onInterceptLockscreenStackGesture(ev)) {
+                return true;
             }
             boolean lockscreenExpandWantsIt = false;
             if (shouldLockscreenExpandHandleTouch()) {
@@ -2231,6 +2271,14 @@ public class NotificationStackScrollLayoutController implements Dumpable {
 
         @Override
         public boolean onTouchEvent(MotionEvent ev) {
+            boolean prioritizeStackGesture = mView.shouldPrioritizeLockscreenStackGesture();
+            if (prioritizeStackGesture
+                    && mLongPressedView == null
+                    && !mSwipeHelper.isSwiping()
+                    && !mView.isExpandingNotification()
+                    && mView.onTouchLockscreenStackGesture(ev)) {
+                return true;
+            }
             NotificationGuts guts = mNotificationGutsManager.getExposedGuts();
             boolean isCancelOrUp = ev.getActionMasked() == MotionEvent.ACTION_CANCEL
                     || ev.getActionMasked() == MotionEvent.ACTION_UP;
@@ -2261,6 +2309,14 @@ public class NotificationStackScrollLayoutController implements Dumpable {
                         mView.dispatchDownEventToScroller(ev);
                     }
                 }
+            }
+            if (!prioritizeStackGesture
+                    && !expandWantsIt
+                    && !expandingNotification
+                    && mLongPressedView == null
+                    && !mSwipeHelper.isSwiping()
+                    && mView.onTouchLockscreenStackGesture(ev)) {
+                return true;
             }
             // true when a notification is being dragged to expand over the lockscreen
             boolean lockscreenExpandWantsIt = false;
@@ -2315,6 +2371,12 @@ public class NotificationStackScrollLayoutController implements Dumpable {
             }
             return horizontalSwipeWantsIt || scrollerWantsIt || expandWantsIt || longPressWantsIt
                     || hunWantsIt || lockscreenExpandWantsIt;
+        }
+
+        void onLockscreenStackGestureClaimed() {
+            mSwipeHelper.cancelLongPress();
+            mSwipeHelper.resetTouchState();
+            mView.getExpandHelper().cancelImmediately();
         }
 
         @NonNull

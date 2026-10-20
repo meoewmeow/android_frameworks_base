@@ -132,6 +132,17 @@ public abstract class ActivatableNotificationView extends ExpandableOutlineView 
     protected boolean mIsLockscreenBlurSupported;
     protected boolean mUseTransparent;
 
+    /**
+     * Set while the Rime lockscreen hides the native stack. Clipping the stack does not remove
+     * a row's SurfaceFlinger blur region, so the rows must stop requesting it themselves.
+     */
+    private static boolean sBackdropBlurSuppressed;
+
+    /** Sets {@link #sBackdropBlurSuppressed}; the caller refreshes existing rows with {@link #updateIfNeeded()}. */
+    public static void setBackdropBlurSuppressed(boolean suppressed) {
+        sBackdropBlurSuppressed = suppressed;
+    }
+
     public ActivatableNotificationView(Context context, AttributeSet attrs) {
         super(context, attrs);
         setClipChildren(false);
@@ -369,7 +380,8 @@ public abstract class ActivatableNotificationView extends ExpandableOutlineView 
         boolean transparent = usesTransparentBackground();
         if (mBackgroundNormal != null) {
             mBackgroundNormal.setBackdropBlurEnabled(
-                    transparent && mOnKeyguard && mIsLockscreenBlurSupported);
+                    transparent && mOnKeyguard && mIsLockscreenBlurSupported
+                            && !sBackdropBlurSuppressed);
         }
         if (mUseTransparent != transparent) {
             mUseTransparent = transparent;

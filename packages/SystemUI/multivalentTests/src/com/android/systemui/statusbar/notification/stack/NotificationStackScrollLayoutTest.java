@@ -1220,24 +1220,94 @@ public class NotificationStackScrollLayoutTest extends SysuiTestCase {
 
     @Test
     @DisableSceneContainer
-    public void bottomStack_limitsNotificationsAndExpandsFullList() {
-        when(mStackSizeCalculator.computeHeight(eq(mStackScroller), eq(2), anyFloat(), any()))
-                .thenReturn(200f);
-        when(mStackSizeCalculator.computeHeight(eq(mStackScroller), eq(-1), anyFloat(), any()))
+    public void lockscreenStackDoesNotChangeNormalNotificationLimitOrPadding() {
+        when(mStackSizeCalculator.computeHeight(eq(mStackScroller), eq(5), anyFloat(), any()))
                 .thenReturn(600f);
-        mStackScroller.setLockscreenBottomStackBounds(100f, 800f, true, false);
+        mStackScroller.setLockscreenStackExperimentEnabled(true);
+        mStackScroller.setLockscreenStackBounds(100f, 800f, true, false);
         clearInvocations(mStackSizeCalculator);
 
         mStackScroller.setMaxDisplayedNotifications(5);
         verify(mStackSizeCalculator).computeHeight(
-                eq(mStackScroller), eq(2), anyFloat(), eq("updateContentHeight"));
-        assertThat(mStackScroller.getTopPadding()).isEqualTo(600);
-
-        clearInvocations(mStackSizeCalculator);
-        mStackScroller.expandLockscreenBottomStack();
-        verify(mStackSizeCalculator).computeHeight(
-                eq(mStackScroller), eq(-1), anyFloat(), eq("updateContentHeight"));
+                eq(mStackScroller), eq(5), anyFloat(), eq("updateContentHeight"));
         assertThat(mStackScroller.getTopPadding()).isEqualTo(100);
+
+        mStackScroller.setLockscreenStackExpansion(0.5f);
+        assertThat(mStackScroller.getTopPadding()).isEqualTo(100);
+        assertTrue(mStackScroller.shouldPrioritizeLockscreenStackGesture());
+        mStackScroller.setLockscreenStackExpansion(1f);
+        assertFalse(mStackScroller.shouldPrioritizeLockscreenStackGesture());
+    }
+
+    @Test
+    @DisableSceneContainer
+    public void lockscreenStackExperimentIsOptInAndCanBeDisabled() {
+        mStackScroller.setLockscreenStackBounds(100f, 800f, true, false);
+        assertFalse(mStackScroller.shouldPrioritizeLockscreenStackGesture());
+
+        mStackScroller.setLockscreenStackExperimentEnabled(true);
+        assertTrue(mStackScroller.shouldPrioritizeLockscreenStackGesture());
+
+        mStackScroller.setLockscreenStackExpansion(0.5f);
+        mStackScroller.setLockscreenStackExperimentEnabled(false);
+        assertFalse(mStackScroller.shouldPrioritizeLockscreenStackGesture());
+    }
+
+    @Test
+    @DisableSceneContainer
+    public void lockscreenStackGestureRequiresVerticalMotionBeyondTouchSlop() {
+        assertFalse(NotificationStackScrollLayout.isDominantVerticalDrag(4f, 8f, 10f));
+        assertFalse(NotificationStackScrollLayout.isDominantVerticalDrag(12f, 11f, 10f));
+        assertTrue(NotificationStackScrollLayout.isDominantVerticalDrag(4f, 11f, 10f));
+        assertFalse(NotificationStackScrollLayout.shouldStartLockscreenStackGesture(
+                0f, 12f, 11f, 10f, 0));
+        assertFalse(NotificationStackScrollLayout.shouldStartLockscreenStackGesture(
+                0f, 0f, -9f, 10f, 0));
+        assertFalse(NotificationStackScrollLayout.shouldStartLockscreenStackGesture(
+                1f, 0f, -20f, 10f, 0));
+    }
+
+    @Test
+    @DisableSceneContainer
+    public void lockscreenStackExpansionTracksFingerAndSupportsTakeover() {
+        assertThat(NotificationStackScrollLayout.lockscreenStackExpansionForDrag(
+                0f, 500f, 350f, 300f)).isEqualTo(0.5f);
+        assertThat(NotificationStackScrollLayout.lockscreenStackExpansionForDrag(
+                0.4f, 350f, 350f, 300f)).isEqualTo(0.4f);
+        assertThat(NotificationStackScrollLayout.lockscreenStackExpansionForDrag(
+                0.4f, 350f, 500f, 300f)).isEqualTo(0f);
+    }
+
+    @Test
+    @DisableSceneContainer
+    public void lockscreenStackSettlesByProgressAndFlingVelocity() {
+        assertThat(NotificationStackScrollLayout.lockscreenStackSettleTarget(
+                0.3f, 0f, 1000f)).isEqualTo(0);
+        assertThat(NotificationStackScrollLayout.lockscreenStackSettleTarget(
+                0.6f, 0f, 1000f)).isEqualTo(1);
+        assertThat(NotificationStackScrollLayout.lockscreenStackSettleTarget(
+                0.2f, -1200f, 1000f)).isEqualTo(1);
+        assertThat(NotificationStackScrollLayout.lockscreenStackSettleTarget(
+                0.8f, 1200f, 1000f)).isEqualTo(0);
+        assertThat(NotificationStackScrollLayout.lockscreenStackSettleTarget(
+                0.3f, -1200f, 1000f, true)).isEqualTo(0);
+        assertThat(NotificationStackScrollLayout.lockscreenStackSettleTarget(
+                0.7f, 1200f, 1000f, true)).isEqualTo(1);
+    }
+
+    @Test
+    @DisableSceneContainer
+    public void downwardListGestureOnlyTransfersAtScrollTop() {
+        assertFalse(NotificationStackScrollLayout.shouldStartLockscreenStackGesture(
+                1f, 0f, 20f, 10f, 1));
+        assertTrue(NotificationStackScrollLayout.shouldStartLockscreenStackGesture(
+                1f, 0f, 20f, 10f, 0));
+        assertFalse(NotificationStackScrollLayout.shouldStartLockscreenStackGesture(
+                0.4f, 0f, 20f, 10f, 1));
+        assertTrue(NotificationStackScrollLayout.shouldStartLockscreenStackGesture(
+                0.4f, 0f, 20f, 10f, 0));
+        assertFalse(NotificationStackScrollLayout.shouldStartLockscreenStackGesture(
+                0f, 0f, 20f, 10f, 0));
     }
 
     @Test

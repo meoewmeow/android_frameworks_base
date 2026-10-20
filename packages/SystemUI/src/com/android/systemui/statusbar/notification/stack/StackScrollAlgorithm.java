@@ -56,6 +56,8 @@ import java.util.List;
 public class StackScrollAlgorithm {
 
     public static final float START_FRACTION = 0.5f;
+    private static final int STACK_VISIBLE_CARDS = 3;
+    private static final float STACK_SCALE_STEP = 0.05f;
 
     private static final String TAG = "StackScrollAlgorithm";
     private static final SourceType STACK_SCROLL_ALGO = SourceType.from("StackScrollAlgorithm");
@@ -85,9 +87,13 @@ public class StackScrollAlgorithm {
     private float mSmallCornerRadius;
     private float mLargeCornerRadius;
     private int mHeadsUpCyclingPadding;
-    private int mLockscreenStackPeek;
-    private boolean mLockscreenBottomStack;
-    private float mLockscreenBottomStackBottom;
+    private int mLockscreenStackGap;
+    private boolean mLockscreenStackEnabled;
+    private int mRimeLipStep;
+    private float mLockscreenStackTop;
+    private float mLockscreenStackBottom;
+    private float mLockscreenStackExpansionDistance;
+    private final ArrayList<ExpandableNotificationRow> mLockscreenStackRows = new ArrayList<>();
 
     public StackScrollAlgorithm(
             Context context,
@@ -130,14 +136,30 @@ public class StackScrollAlgorithm {
         mQuickQsOffsetHeight = SystemBarUtils.getQuickQsOffsetHeight(context);
         mSmallCornerRadius = res.getDimension(R.dimen.notification_corner_radius_small);
         mLargeCornerRadius = res.getDimension(R.dimen.notification_corner_radius);
-        mLockscreenStackPeek = res.getDimensionPixelSize(
-                R.dimen.keyguard_notification_stack_peek);
+        mLockscreenStackGap = res.getDimensionPixelSize(
+                R.dimen.keyguard_notification_stack_gap);
+        mRimeLipStep = Math.round(8 * res.getDisplayMetrics().density);
         mHeadsUpAnimator.updateResources(context);
     }
 
-    public void setLockscreenBottomStack(boolean collapsed, float bottom) {
-        mLockscreenBottomStack = collapsed;
-        mLockscreenBottomStackBottom = bottom;
+    /** Rime: how many card edges peek out under a stacked app group (0 for a single card). */
+    public static int rimeGroupLipCount(ExpandableNotificationRow row) {
+        if (!row.isSummaryWithChildren() || row.getAttachedChildren() == null) return 0;
+        return Math.max(0, Math.min(row.getAttachedChildren().size() - 1, 2));
+    }
+
+    public int getRimeLipStep() {
+        return mRimeLipStep;
+    }
+
+    public void setLockscreenStackBounds(boolean enabled, float top, float bottom) {
+        mLockscreenStackEnabled = enabled;
+        mLockscreenStackTop = top;
+        mLockscreenStackBottom = bottom;
+    }
+
+    public float getLockscreenStackExpansionDistance() {
+        return mLockscreenStackExpansionDistance;
     }
 
     /**
@@ -152,6 +174,7 @@ public class StackScrollAlgorithm {
         resetChildViewStates();
         initAlgorithmState(algorithmState, ambientState);
         updatePositionsForState(algorithmState, ambientState);
+        applyLockscreenStackTransform(algorithmState, ambientState);
         updateZValuesForState(algorithmState, ambientState);
         updateHeadsUpStates(algorithmState, ambientState);
         updatePulsingStates(algorithmState, ambientState);
@@ -161,72 +184,105 @@ public class StackScrollAlgorithm {
         updateSpeedBumpState(algorithmState, speedBumpIndex);
         updateShelfState(algorithmState, ambientState);
         updateAlphaState(algorithmState, ambientState);
-        updateLockscreenBottomStack(algorithmState, ambientState);
+        applyLockscreenStackContentAlpha(algorithmState);
         getNotificationChildrenStates(algorithmState);
     }
 
-    private void updateLockscreenBottomStack(StackScrollAlgorithmState algorithmState,
+    private void applyLockscreenStackTransform(StackScrollAlgorithmState algorithmState,
             AmbientState ambientState) {
-        if (!mLockscreenBottomStack || !ambientState.isOnKeyguard()
+        if (!mLockscreenStackEnabled || !ambientState.isOnKeyguard()
                 || ambientState.getDozeAmount() != 0f
                 || ambientState.getFractionToShade() != 0f
                 || ambientState.isExpansionChanging()
                 || mHostView.getHeight() <= 0
-                || mLockscreenBottomStackBottom <= 0f) {
+                || mLockscreenStackBottom <= 0f
+                || (mHostView instanceof NotificationStackScrollLayout layout
+                        && layout.isLaunchingNotification())) {
             return;
         }
 
-        ExpandableNotificationRow first = null;
-        ExpandableNotificationRow second = null;
-        int count = 0;
+        ArrayList<ExpandableNotificationRow> stackRows = mLockscreenStackRows;
+        stackRows.clear();
         for (ExpandableView child : algorithmState.visibleChildren) {
-            if (child instanceof ExpandableNotificationRow row && !row.isHeadsUpState()) {
-                count++;
-                if (first == null) {
-                    first = row;
-                } else if (second == null) {
-                    second = row;
-                } else {
-                    child.getViewState().hidden = true;
-                    child.getViewState().setAlpha(0f);
-                }
+            if (child instanceof ExpandableNotificationRow row
+                    && isLockscreenStackRow(row)) {
+                stackRows.add(row);
             }
         }
-        if (first == null) return;
-
-        float bottom = Math.min(mLockscreenBottomStackBottom, mHostView.getHeight());
-        NotificationShelf shelf = ambientState.getShelf();
-        if (shelf != null && count > 2) {
-            ExpandableViewState shelfState = shelf.getViewState();
-            shelfState.hidden = false;
-            shelfState.setAlpha(1f);
-            shelfState.setYTranslation(bottom - shelfState.height);
-            bottom -= shelfState.height;
-        } else if (shelf != null) {
-            shelf.getViewState().hidden = true;
+        if (stackRows.isEmpty()) {
+            mLockscreenStackExpansionDistance = 0f;
+            return;
         }
 
-        ExpandableViewState firstState = first.getViewState();
-        int peek = second == null ? 0 : Math.min(mLockscreenStackPeek,
-                second.getViewState().height);
-        float firstTop = Math.max(ambientState.getStackY(), bottom - firstState.height - peek);
-        firstState.setYTranslation(firstTop);
-        firstState.setZTranslation(ambientState.getBaseZHeight() + mPinnedZTranslationExtra);
-        firstState.clipTopAmount = 0;
-        firstState.hidden = false;
-        firstState.inShelf = false;
-        firstState.setAlpha(1f);
-        firstState.location = ExpandableViewState.LOCATION_MAIN_AREA;
+        ExpandableViewState frontState = stackRows.get(0).getViewState();
+        float listFrontY = frontState.getYTranslation();
+        int frontHeight = frontState.height;
+        int deepestVisibleDepth = Math.min(STACK_VISIBLE_CARDS, stackRows.size()) - 1;
+        float bottom = Math.min(mLockscreenStackBottom, mHostView.getHeight());
+        float deepestScale = 1f - deepestVisibleDepth * STACK_SCALE_STEP;
+        float stackAnchorY = bottom - deepestVisibleDepth * mLockscreenStackGap
+                - frontHeight * (1f + deepestScale) / 2f;
+        stackAnchorY = Math.max(mLockscreenStackTop, stackAnchorY);
+        mLockscreenStackExpansionDistance = stackAnchorY - listFrontY;
 
-        if (second != null) {
-            ExpandableViewState secondState = second.getViewState();
-            secondState.setYTranslation(bottom - secondState.height);
-            secondState.clipTopAmount = Math.max(0, secondState.height - peek);
-            secondState.setZTranslation(ambientState.getBaseZHeight());
-            secondState.hidden = false;
-            secondState.inShelf = false;
-            secondState.setAlpha(1f);
-            secondState.location = ExpandableViewState.LOCATION_BOTTOM_STACK_PEEKING;
+        float expansion = ambientState.getLockscreenStackExpansion();
+        for (int depth = 0; depth < stackRows.size(); depth++) {
+            ExpandableNotificationRow row = stackRows.get(depth);
+            ExpandableViewState state = row.getViewState();
+            float listY = state.getYTranslation();
+            float listScaleX = state.getScaleX();
+            float listScaleY = state.getScaleY();
+            int listHeight = state.height;
+            float listAlpha = state.getAlpha();
+            float collapsedScale = Math.max(0f, 1f - depth * STACK_SCALE_STEP);
+            float collapsedY = stackAnchorY + depth * mLockscreenStackGap;
+            float visibilityAlpha = getStackVisibilityAlpha(depth, expansion);
+            float contentAlpha = depth == 0 ? 1f : expansion;
+
+            state.lockscreenStackDepth = depth;
+            state.lockscreenStackListAlpha = listAlpha;
+            state.lockscreenStackVisibilityAlpha = visibilityAlpha;
+            state.lockscreenStackContentAlpha = contentAlpha;
+            if (expansion >= 1f) continue;
+
+            state.setYTranslation(MathUtils.lerp(collapsedY, listY, expansion));
+            state.setScaleX(MathUtils.lerp(collapsedScale, listScaleX, expansion));
+            state.setScaleY(MathUtils.lerp(collapsedScale, listScaleY, expansion));
+            state.height = Math.round(MathUtils.lerp(frontHeight, listHeight, expansion));
+            if (expansion < 1f) {
+                // Rows moved out of the ordinary list shelf must remain visible as cards while
+                // they occupy the collapsed deck. At expansion 1, retain the list's exact state.
+                state.hidden = false;
+                state.inShelf = false;
+                state.clipTopAmount = 0;
+            }
+        }
+    }
+
+    private static boolean isLockscreenStackRow(ExpandableNotificationRow row) {
+        return row.getVisibility() != View.GONE
+                && !row.willBeGone()
+                && !row.isHeadsUpState()
+                && !row.isPinned()
+                && !row.showingPulsing()
+                && !row.areGutsExposed()
+                && !row.isUserLocked()
+                && !row.isChildInGroup();
+    }
+
+    @VisibleForTesting
+    static float getStackVisibilityAlpha(int depth, float expansion) {
+        if (depth < STACK_VISIBLE_CARDS) return 1f;
+        float revealStart = Math.min(0.8f, (depth - STACK_VISIBLE_CARDS) * 0.12f);
+        return MathUtils.constrain((expansion - revealStart) / (1f - revealStart), 0f, 1f);
+    }
+
+    private void applyLockscreenStackContentAlpha(StackScrollAlgorithmState algorithmState) {
+        for (ExpandableView child : algorithmState.visibleChildren) {
+            if (child instanceof ExpandableNotificationRow row) {
+                row.setLockscreenStackContentAlpha(
+                        row.getViewState().lockscreenStackContentAlpha);
+            }
         }
     }
 
@@ -295,6 +351,13 @@ public class StackScrollAlgorithm {
             if (isEmptyShadeView(view) && ambientState.isOnKeyguard()) {
                 final float fractionToShade = ambientState.getFractionToShade();
                 viewState.setAlpha(ShadeInterpolation.getContentAlpha(fractionToShade));
+            }
+
+            if (view instanceof ExpandableNotificationRow row
+                    && row.getViewState().lockscreenStackDepth >= 0) {
+                ExpandableViewState rowState = row.getViewState();
+                viewState.setAlpha(viewState.getAlpha() * rowState.lockscreenStackListAlpha
+                        * rowState.lockscreenStackVisibilityAlpha);
             }
 
             NotificationShelf shelf = ambientState.getShelf();
@@ -873,6 +936,13 @@ public class StackScrollAlgorithm {
                 expansionFraction * (getMaxAllowedChildHeight(view) + mPaddingBetweenElements);
         algorithmState.mCurrentExpandedYPosition += view.getIntrinsicHeight()
                 + mPaddingBetweenElements;
+        // Rime: an app's stacked group shows the edges of the cards behind it; leave them room.
+        if (mLockscreenStackEnabled && ambientState.isOnKeyguard()
+                && view instanceof ExpandableNotificationRow groupRow) {
+            int lipSpace = rimeGroupLipCount(groupRow) * mRimeLipStep;
+            algorithmState.mCurrentYPosition += expansionFraction * lipSpace;
+            algorithmState.mCurrentExpandedYPosition += lipSpace;
+        }
 
         setLocation(view.getViewState(), algorithmState.mCurrentYPosition, i);
         viewState.setYTranslation(viewState.getYTranslation() + stackTop);
@@ -1438,8 +1508,18 @@ public class StackScrollAlgorithm {
         // Header visibility is a deprecated concept, we are using headerVisibleAmount only because
         // this value nicely goes from 0 to 1 during the HUN-to-Shade process.
 
-        childViewState.setZTranslation(childViewState.getZTranslation()
-                + (1.0f - child.getHeaderVisibleAmount()) * mPinnedZTranslationExtra);
+        float listZ = childViewState.getZTranslation()
+                + (1.0f - child.getHeaderVisibleAmount()) * mPinnedZTranslationExtra;
+        int stackDepth = childViewState.lockscreenStackDepth;
+        if (child instanceof ExpandableNotificationRow && stackDepth >= 0
+                && ambientState.getLockscreenStackExpansion() < 1f) {
+            float stackZ = Math.max(baseZ - mPinnedZTranslationExtra,
+                    baseZ + (STACK_VISIBLE_CARDS - stackDepth) * mPinnedZTranslationExtra
+                            / STACK_VISIBLE_CARDS);
+            listZ = MathUtils.lerp(stackZ, listZ,
+                    ambientState.getLockscreenStackExpansion());
+        }
+        childViewState.setZTranslation(listZ);
         return childrenOnTop;
     }
 

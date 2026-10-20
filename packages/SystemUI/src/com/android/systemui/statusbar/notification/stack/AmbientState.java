@@ -94,6 +94,7 @@ public class AmbientState implements Dumpable {
     private int mStatusBarState;
     private boolean mShowingStackOnLockscreen;
     private float mLockscreenStackFadeInProgress;
+    private float mLockscreenStackExpansion;
     private float mExpandingVelocity;
     private boolean mPanelTracking;
     private boolean mExpansionChanging;
@@ -664,6 +665,14 @@ public class AmbientState implements Dumpable {
     public void setLockscreenStackFadeInProgress(float lockscreenStackFadeInProgress) {
         if (SceneContainerFlag.isUnexpectedlyInLegacyMode()) return;
         mLockscreenStackFadeInProgress = lockscreenStackFadeInProgress;
+    }
+
+    public float getLockscreenStackExpansion() {
+        return mLockscreenStackExpansion;
+    }
+
+    public void setLockscreenStackExpansion(float lockscreenStackExpansion) {
+        mLockscreenStackExpansion = MathUtils.constrain(lockscreenStackExpansion, 0f, 1f);
     }
 
     public void setStatusBarState(int statusBarState) {

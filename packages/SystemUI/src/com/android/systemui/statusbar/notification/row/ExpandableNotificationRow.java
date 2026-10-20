@@ -2098,6 +2098,19 @@ public class ExpandableNotificationRow extends ActivatableNotificationView
     }
 
     /**
+     * Applies stack-card fading to notification contents while leaving the row background intact.
+     */
+    public void setLockscreenStackContentAlpha(float alpha) {
+        float contentAlpha = MathUtils.constrain(alpha, 0f, 1f);
+        for (NotificationContentView layout : mLayouts) {
+            layout.setTransitionAlpha(contentAlpha);
+        }
+        if (mChildrenContainer != null) {
+            mChildrenContainer.setTransitionAlpha(contentAlpha);
+        }
+    }
+
+    /**
      * Set if the row is minimized.
      */
     public void setIsMinimized(boolean isMinimized) {

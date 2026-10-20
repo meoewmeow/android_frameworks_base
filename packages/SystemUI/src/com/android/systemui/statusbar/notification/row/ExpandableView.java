@@ -821,6 +821,10 @@ public abstract class ExpandableView extends FrameLayout implements Dumpable, Ro
         mViewState.setScaleY(getScaleY());
         mViewState.inShelf = false;
         mViewState.headsUpIsVisible = false;
+        mViewState.lockscreenStackDepth = -1;
+        mViewState.lockscreenStackListAlpha = 1f;
+        mViewState.lockscreenStackVisibilityAlpha = 1f;
+        mViewState.lockscreenStackContentAlpha = 1f;
 
         // handling reset for child notifications
         if (this instanceof ExpandableNotificationRow row) {

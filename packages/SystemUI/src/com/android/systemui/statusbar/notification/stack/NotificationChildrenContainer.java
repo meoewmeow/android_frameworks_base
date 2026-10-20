@@ -1055,6 +1055,11 @@ public class NotificationChildrenContainer extends ViewGroup
     }
 
     private int getNumberOfChildrenWhenCollapsed() {
+        // Rime: on its lock screen a group is the newest card plus "+N"; the rest stack behind it.
+        if (NotificationStackScrollLayout.isRimeStackEnabled() && !isBundle()
+                && mContainingNotification.isOnKeyguard()) {
+            return 1;
+        }
         if (isBundle()) {
             return NUMBER_OF_CHILDREN_BUNDLE_COLLAPSED;
         } else {

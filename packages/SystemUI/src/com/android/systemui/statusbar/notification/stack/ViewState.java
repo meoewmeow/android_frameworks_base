@@ -918,6 +918,15 @@ public class ViewState implements Dumpable {
         abortAnimation(view, TAG_ANIMATOR_ALPHA);
     }
 
+    public void cancelAnimationsForImmediateUpdate(View view) {
+        abortAnimation(view, TAG_ANIMATOR_TRANSLATION_X);
+        abortAnimation(view, TAG_ANIMATOR_TRANSLATION_Y);
+        abortAnimation(view, TAG_ANIMATOR_TRANSLATION_Z);
+        abortAnimation(view, SCALE_X_PROPERTY.getAnimatorTag());
+        abortAnimation(view, SCALE_Y_PROPERTY.getAnimatorTag());
+        abortAnimation(view, TAG_ANIMATOR_ALPHA);
+    }
+
     /**
      * Finish the animations. This causes any currently running animators to jump to the end
      * value of the property being animated, and to trigger any animation end listeners.

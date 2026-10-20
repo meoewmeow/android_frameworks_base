@@ -484,42 +484,215 @@ class StackScrollAlgorithmTest(flags: FlagsParameterization) : SysuiTestCase() {
 
     @Test
     @DisableSceneContainer
-    fun bottomStack_oneNotificationAnchorsAtBottom() {
+    fun collapsedLockscreenStackOverlapsThreeRowsAndHidesDeeperRows() {
+        val rows = (0..3).map { index ->
+            if (index == 0) {
+                notificationRow
+            } else {
+                mock<ExpandableNotificationRow>().apply {
+                    whenever(viewState).thenReturn(ExpandableViewState())
+                    whenever(key).thenReturn("key$index")
+                    whenever(entryLegacy).thenReturn(notificationEntry)
+                    whenever(entryAdapter).thenReturn(notificationEntryAdapter)
+                }
+            }
+        }
+        rows.forEachIndexed { index, row ->
+            whenever(row.intrinsicHeight).thenReturn(100 + index * 50)
+            whenever(row.isHeadsUpState()).thenReturn(false)
+            whenever(row.isPinned).thenReturn(false)
+            whenever(row.showingPulsing()).thenReturn(false)
+            whenever(row.isChildInGroup).thenReturn(false)
+        }
+        rows.drop(1).forEach(hostView::addView)
         hostView.layout(0, 0, 400, 1000)
-        ambientState.statusBarState = StatusBarState.KEYGUARD
+        ambientState.setStatusBarState(StatusBarState.KEYGUARD)
         ambientState.stackY = 100f
         ambientState.stackEndHeight = 600f
         ambientState.interpolatedStackHeight = 600f
-        whenever(notificationRow.intrinsicHeight).thenReturn(100)
-        stackScrollAlgorithm.setLockscreenBottomStack(true, 800f)
+        stackScrollAlgorithm.setLockscreenStackBounds(true, 100f, 800f)
 
         stackScrollAlgorithm.resetViewStates(ambientState, 0)
 
-        assertThat(notificationRow.viewState.yTranslation).isEqualTo(700f)
-        assertThat(notificationRow.viewState.clipTopAmount).isEqualTo(0)
+        assertThat(rows[0].viewState.scaleY).isEqualTo(1f)
+        assertThat(rows[1].viewState.scaleY).isEqualTo(0.95f)
+        assertThat(rows[2].viewState.scaleY).isEqualTo(0.90f)
+        assertThat(rows[0].viewState.zTranslation)
+            .isGreaterThan(rows[1].viewState.zTranslation)
+        assertThat(rows[1].viewState.zTranslation)
+            .isGreaterThan(rows[2].viewState.zTranslation)
+        assertThat(rows[2].viewState.zTranslation)
+            .isGreaterThan(rows[3].viewState.zTranslation)
+        assertThat(rows[0].viewState.height).isEqualTo(100)
+        assertThat(rows[1].viewState.height).isEqualTo(100)
+        assertThat(rows[2].viewState.height).isEqualTo(100)
+        assertThat(rows[1].viewState.yTranslation - rows[0].viewState.yTranslation)
+            .isEqualTo(px(R.dimen.keyguard_notification_stack_gap))
+        assertThat(rows[2].viewState.yTranslation - rows[1].viewState.yTranslation)
+            .isEqualTo(px(R.dimen.keyguard_notification_stack_gap))
+        assertThat(rows[2].viewState.yTranslation
+                + rows[2].viewState.height * (1f + rows[2].viewState.scaleY) / 2f)
+            .isEqualTo(800f)
+        assertThat(rows[0].viewState.lockscreenStackContentAlpha).isEqualTo(1f)
+        assertThat(rows[1].viewState.lockscreenStackContentAlpha).isEqualTo(0f)
+        assertThat(rows[2].viewState.lockscreenStackContentAlpha).isEqualTo(0f)
+        assertThat(rows[3].viewState.lockscreenStackVisibilityAlpha).isEqualTo(0f)
+        assertThat(rows[3].viewState.alpha).isEqualTo(0f)
     }
 
     @Test
     @DisableSceneContainer
-    fun bottomStack_twoNotificationsOverlapWithOnlySecondPeeking() {
-        val second = mock<ExpandableNotificationRow>()
-        whenever(second.viewState).thenReturn(ExpandableViewState())
-        whenever(second.intrinsicHeight).thenReturn(100)
-        hostView.addView(second)
+    fun lockscreenStackInterpolatesToNormalListGeometry() {
+        val rows = listOf(
+            notificationRow,
+            mock<ExpandableNotificationRow>().apply {
+                whenever(viewState).thenReturn(ExpandableViewState())
+                whenever(key).thenReturn("second")
+                whenever(entryLegacy).thenReturn(notificationEntry)
+                whenever(entryAdapter).thenReturn(notificationEntryAdapter)
+            },
+            mock<ExpandableNotificationRow>().apply {
+                whenever(viewState).thenReturn(ExpandableViewState())
+                whenever(key).thenReturn("third")
+                whenever(entryLegacy).thenReturn(notificationEntry)
+                whenever(entryAdapter).thenReturn(notificationEntryAdapter)
+            },
+        )
+        rows.forEachIndexed { index, row ->
+            whenever(row.intrinsicHeight).thenReturn(100 + index * 50)
+            whenever(row.isHeadsUpState()).thenReturn(false)
+            whenever(row.isPinned).thenReturn(false)
+            whenever(row.showingPulsing()).thenReturn(false)
+            whenever(row.isChildInGroup).thenReturn(false)
+        }
+        rows.drop(1).forEach(hostView::addView)
         hostView.layout(0, 0, 400, 1000)
-        ambientState.statusBarState = StatusBarState.KEYGUARD
+        ambientState.setStatusBarState(StatusBarState.KEYGUARD)
         ambientState.stackY = 100f
         ambientState.stackEndHeight = 600f
         ambientState.interpolatedStackHeight = 600f
-        whenever(notificationRow.intrinsicHeight).thenReturn(100)
-        stackScrollAlgorithm.setLockscreenBottomStack(true, 800f)
+        stackScrollAlgorithm.setLockscreenStackBounds(false, 100f, 800f)
+
+        ambientState.lockscreenStackExpansion = 0f
+        stackScrollAlgorithm.resetViewStates(ambientState, 0)
+        val listY = rows.map { it.viewState.yTranslation }
+        val listHeights = rows.map { it.viewState.height }
+        val listScaleX = rows.map { it.viewState.scaleX }
+        val listScaleY = rows.map { it.viewState.scaleY }
+        val listAlpha = rows.map { it.viewState.alpha }
+        val listClipTop = rows.map { it.viewState.clipTopAmount }
+        val listHidden = rows.map { it.viewState.hidden }
+        val listInShelf = rows.map { it.viewState.inShelf }
+
+        stackScrollAlgorithm.setLockscreenStackBounds(true, 100f, 800f)
+        ambientState.lockscreenStackExpansion = 0f
+        stackScrollAlgorithm.resetViewStates(ambientState, 0)
+        val collapsedY = rows.map { it.viewState.yTranslation }
+
+        ambientState.lockscreenStackExpansion = 0.5f
+        stackScrollAlgorithm.resetViewStates(ambientState, 0)
+        rows.forEachIndexed { index, row ->
+            assertThat(row.viewState.yTranslation)
+                .isEqualTo((collapsedY[index] + listY[index]) / 2f)
+            assertThat(row.viewState.scaleY)
+                .isEqualTo((1f - index * 0.05f + 1f) / 2f)
+            assertThat(row.viewState.height).isEqualTo((100 + listHeights[index]) / 2)
+        }
+
+        ambientState.lockscreenStackExpansion = 1f
+        stackScrollAlgorithm.resetViewStates(ambientState, 0)
+        rows.forEachIndexed { index, row ->
+            assertThat(row.viewState.yTranslation).isEqualTo(listY[index])
+            assertThat(row.viewState.scaleX).isEqualTo(listScaleX[index])
+            assertThat(row.viewState.scaleY).isEqualTo(listScaleY[index])
+            assertThat(row.viewState.height).isEqualTo(listHeights[index])
+            assertThat(row.viewState.alpha).isEqualTo(listAlpha[index])
+            assertThat(row.viewState.clipTopAmount).isEqualTo(listClipTop[index])
+            assertThat(row.viewState.hidden).isEqualTo(listHidden[index])
+            assertThat(row.viewState.inShelf).isEqualTo(listInShelf[index])
+        }
+    }
+
+    @Test
+    fun lockscreenStackDeeperRowsFadeInInOrder() {
+        assertThat(StackScrollAlgorithm.getStackVisibilityAlpha(3, 0f)).isEqualTo(0f)
+        assertThat(StackScrollAlgorithm.getStackVisibilityAlpha(3, 0.5f)).isEqualTo(0.5f)
+        assertThat(StackScrollAlgorithm.getStackVisibilityAlpha(4, 0.5f))
+            .isLessThan(StackScrollAlgorithm.getStackVisibilityAlpha(3, 0.5f))
+        assertThat(StackScrollAlgorithm.getStackVisibilityAlpha(4, 1f)).isEqualTo(1f)
+    }
+
+    @Test
+    @DisableSceneContainer
+    fun lockscreenStackLeavesHeadsUpGroupChildGutsAndShelfOutOfDeck() {
+        val groupSummary = notificationRow
+        whenever(groupSummary.isSummaryWithChildren).thenReturn(true)
+
+        val headsUp = mock<ExpandableNotificationRow>().apply {
+            whenever(viewState).thenReturn(ExpandableViewState())
+            whenever(key).thenReturn("heads-up")
+            whenever(entryLegacy).thenReturn(notificationEntry)
+            whenever(entryAdapter).thenReturn(notificationEntryAdapter)
+            whenever(intrinsicHeight).thenReturn(100)
+            whenever(isHeadsUpState()).thenReturn(true)
+            whenever(isPinned).thenReturn(true)
+            whenever(isChildInGroup).thenReturn(false)
+        }
+        val groupChild = mock<ExpandableNotificationRow>().apply {
+            whenever(viewState).thenReturn(ExpandableViewState())
+            whenever(key).thenReturn("group-child")
+            whenever(entryLegacy).thenReturn(notificationEntry)
+            whenever(entryAdapter).thenReturn(notificationEntryAdapter)
+            whenever(intrinsicHeight).thenReturn(100)
+            whenever(isHeadsUpState()).thenReturn(false)
+            whenever(isPinned).thenReturn(false)
+            whenever(showingPulsing()).thenReturn(false)
+            whenever(isChildInGroup).thenReturn(true)
+        }
+        val guts = mock<ExpandableNotificationRow>().apply {
+            whenever(viewState).thenReturn(ExpandableViewState())
+            whenever(key).thenReturn("guts")
+            whenever(entryLegacy).thenReturn(notificationEntry)
+            whenever(entryAdapter).thenReturn(notificationEntryAdapter)
+            whenever(intrinsicHeight).thenReturn(100)
+            whenever(isHeadsUpState()).thenReturn(false)
+            whenever(isPinned).thenReturn(false)
+            whenever(showingPulsing()).thenReturn(false)
+            whenever(isChildInGroup).thenReturn(false)
+            whenever(areGutsExposed()).thenReturn(true)
+        }
+        val pulsing = mock<ExpandableNotificationRow>().apply {
+            whenever(viewState).thenReturn(ExpandableViewState())
+            whenever(key).thenReturn("pulsing")
+            whenever(entryLegacy).thenReturn(notificationEntry)
+            whenever(entryAdapter).thenReturn(notificationEntryAdapter)
+            whenever(intrinsicHeight).thenReturn(100)
+            whenever(isHeadsUpState()).thenReturn(false)
+            whenever(isPinned).thenReturn(false)
+            whenever(showingPulsing()).thenReturn(true)
+            whenever(isChildInGroup).thenReturn(false)
+        }
+        val shelf = notificationShelf
+
+        listOf(headsUp, groupChild, guts, pulsing).forEach(hostView::addView)
+        hostView.addView(shelf)
+        ambientState.setShelf(shelf)
+        hostView.layout(0, 0, 400, 1000)
+        ambientState.setStatusBarState(StatusBarState.KEYGUARD)
+        ambientState.stackY = 100f
+        ambientState.stackEndHeight = 600f
+        ambientState.interpolatedStackHeight = 600f
+        stackScrollAlgorithm.setLockscreenStackBounds(true, 100f, 800f)
 
         stackScrollAlgorithm.resetViewStates(ambientState, 0)
 
-        val peek = px(R.dimen.keyguard_notification_stack_peek)
-        assertThat(notificationRow.viewState.yTranslation).isEqualTo(700f - peek)
-        assertThat(second.viewState.yTranslation).isEqualTo(700f)
-        assertThat(second.viewState.clipTopAmount).isEqualTo((100f - peek).toInt())
+        assertThat(groupSummary.viewState.lockscreenStackDepth).isEqualTo(0)
+        assertThat(groupSummary.viewState.inShelf).isFalse()
+        assertThat(headsUp.viewState.lockscreenStackDepth).isEqualTo(-1)
+        assertThat(groupChild.viewState.lockscreenStackDepth).isEqualTo(-1)
+        assertThat(guts.viewState.lockscreenStackDepth).isEqualTo(-1)
+        assertThat(pulsing.viewState.lockscreenStackDepth).isEqualTo(-1)
+        assertThat(shelf.viewState.lockscreenStackDepth).isEqualTo(-1)
     }
 
     @Test

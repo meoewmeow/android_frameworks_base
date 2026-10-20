@@ -84,6 +84,10 @@ import android.view.animation.Interpolator;
 import android.widget.OverScroller;
 import android.widget.ScrollView;
 
+import androidx.dynamicanimation.animation.FloatPropertyCompat;
+import androidx.dynamicanimation.animation.SpringAnimation;
+import androidx.dynamicanimation.animation.SpringForce;
+
 import com.android.app.animation.Interpolators;
 import com.android.internal.annotations.VisibleForTesting;
 import com.android.internal.jank.InteractionJankMonitor;
@@ -177,6 +181,20 @@ import java.util.function.Consumer;
 public class NotificationStackScrollLayout
         extends ViewGroup
         implements Dumpable, NotificationScrollView {
+    private static final FloatPropertyCompat<NotificationStackScrollLayout>
+            LOCKSCREEN_STACK_EXPANSION =
+            new FloatPropertyCompat<>("lockscreenStackExpansion") {
+                @Override
+                public float getValue(NotificationStackScrollLayout layout) {
+                    return layout.mLockscreenStackExpansion;
+                }
+
+                @Override
+                public void setValue(NotificationStackScrollLayout layout, float value) {
+                    layout.setLockscreenStackExpansion(value);
+                }
+            };
+
     public static final float BACKGROUND_ALPHA_DIMMED = 0.7f;
     private static final String TAG = "StackScroller";
     private static final boolean SPEW = Log.isLoggable(TAG, Log.VERBOSE);
@@ -493,17 +511,28 @@ public class NotificationStackScrollLayout
      * shelf. -1 when there is no limit.
      */
     private int mMaxDisplayedNotifications = -1;
-    private int mLockscreenCollapsedMaxNotifications = -1;
-    private boolean mLockscreenNotificationsExpanded;
-    private boolean mLockscreenBottomStackEnabled;
-    private float mLockscreenBottomStackTop;
-    private float mLockscreenBottomStackBottom;
-    private int mRequestedMaxDisplayedNotifications = -1;
+    private boolean mLockscreenStackExperimentEnabled;
+    private boolean mLockscreenStackOnLockscreen;
+    private boolean mLockscreenStackEnabled;
+    private float mLockscreenStackTop;
+    private float mLockscreenStackBottom;
+    private float mLockscreenStackExpansion;
+    private SpringAnimation mLockscreenStackSettleAnimation;
+    private boolean mLockscreenStackGestureArmed;
+    private boolean mLockscreenStackGestureActive;
+    private boolean mLockscreenStackGestureStartedDuringSettle;
+    private float mLockscreenStackGestureDownX;
+    private float mLockscreenStackGestureDownY;
+    private float mLockscreenStackGestureStartExpansion;
+    private int mLockscreenStackGesturePointerId = INVALID_POINTER;
+    private VelocityTracker mLockscreenStackGestureVelocityTracker;
     private float mKeyguardBottomPadding = -1;
     @VisibleForTesting
     int mStatusBarHeight;
     private int mMinInteractionHeight;
     private final Rect mClipRect = new Rect();
+    private final Rect mLockscreenStackHitRect = new Rect();
+    private final int[] mRootLocationOnScreen = new int[2];
     private boolean mIsClipped;
     private Rect mRequestedClipBounds;
     private boolean mInHeadsUpPinnedMode;
@@ -686,6 +715,7 @@ public class NotificationStackScrollLayout
 
     public NotificationStackScrollLayout(Context context, AttributeSet attrs) {
         super(context, attrs, 0, 0);
+        sRimeInstance = new java.lang.ref.WeakReference<>(this);
         Resources res = getResources();
         mFeatureFlags = Dependency.get(FeatureFlags.class);
         mIsSmallLandscapeLockscreenEnabled = mFeatureFlags.isEnabled(
@@ -843,6 +873,12 @@ public class NotificationStackScrollLayout
 
     protected void onDraw(Canvas canvas) {
         onJustBeforeDraw();
+        if (mLockscreenStackEnabled && mAmbientState.isOnKeyguard()) {
+            drawRimeGroupLips(canvas);
+            // Rows move as RenderNode properties, which never redraw this view: keep the edges
+            // under them while anything animates.
+            if (isCurrentlyAnimating() || isLockscreenStackTransformRunning()) postInvalidateOnAnimation();
+        }
 
         if (mDebugLines) {
             onDrawDebug(canvas);
@@ -1483,33 +1519,42 @@ public class NotificationStackScrollLayout
         mAmbientState.setCurrentScrollVelocity(mScroller.isFinished()
                 ? 0
                 : mScroller.getCurrVelocity());
-        if (mShelf != null) {
-            int notificationCount = 0;
-            if (mLockscreenBottomStackEnabled && !mLockscreenNotificationsExpanded
-                    && mLockscreenCollapsedMaxNotifications > 0) {
-                for (int i = 0; i < getChildCount(); i++) {
-                    View child = getChildAt(i);
-                    if (child instanceof ExpandableNotificationRow row
-                            && child.getVisibility() != View.GONE && !row.willBeGone()
-                            && !row.isHeadsUpState()) {
-                        notificationCount++;
-                    }
-                }
-            }
-            mShelf.setBottomStackMoreCount(Math.max(0, notificationCount - 2));
-        }
-        mStackScrollAlgorithm.setLockscreenBottomStack(
-                mLockscreenBottomStackEnabled && !mLockscreenNotificationsExpanded
-                        && mLockscreenCollapsedMaxNotifications > 0,
-                mLockscreenBottomStackBottom);
+        mStackScrollAlgorithm.setLockscreenStackBounds(
+                mLockscreenStackEnabled, mLockscreenStackTop, mLockscreenStackBottom);
         mStackScrollAlgorithm.resetViewStates(mAmbientState, getSpeedBumpIndex());
-        if (!isCurrentlyAnimating() && !mNeedsAnimation) {
+        if (mLockscreenStackEnabled) invalidate();
+        if (isLockscreenStackTransformRunning()) {
+            applyLockscreenStackStateDirectly();
+        } else if (!isCurrentlyAnimating() && !mNeedsAnimation) {
             applyCurrentState();
         } else {
             startAnimationToState();
         }
         avoidNotificationOverlaps();
         Trace.endSection();
+    }
+
+    private boolean isLockscreenStackTransformRunning() {
+        return mLockscreenStackGestureActive
+                || (mLockscreenStackSettleAnimation != null
+                        && mLockscreenStackSettleAnimation.isRunning());
+    }
+
+    private void applyLockscreenStackStateDirectly() {
+        for (int i = 0; i < getChildCount(); i++) {
+            ExpandableView child = getChildAtIndex(i);
+            if (child instanceof ExpandableNotificationRow row
+                    && row.getViewState().lockscreenStackDepth >= 0) {
+                row.applyViewState();
+            }
+        }
+        if (mShelf != null) {
+            mShelf.applyViewState();
+        }
+        if (mLocationsChangedListener != null) {
+            mLocationsChangedListener.onChildLocationsChanged(collectVisibleLocationsCallable);
+        }
+        updateViewShadows();
     }
 
     private void onPreDrawDuringAnimation() {
@@ -2951,17 +2996,6 @@ public class NotificationStackScrollLayout
                         shelfIntrinsicHeight, "updateContentHeight");
         setIntrinsicContentHeight(height);
 
-        if (mLockscreenBottomStackEnabled) {
-            int top = mLockscreenNotificationsExpanded
-                    ? (int) mLockscreenBottomStackTop
-                    : (int) Math.max(mLockscreenBottomStackTop,
-                            mLockscreenBottomStackBottom - height);
-            if (mAmbientState.getTopPadding() != top) {
-                mAmbientState.setTopPadding(top);
-                requestChildrenUpdate();
-            }
-        }
-
         // The topPadding can be bigger than the regular padding when qs is expanded, in that
         // state the maxPanelHeight and the contentHeight should be bigger
         setContentHeight(
@@ -3172,25 +3206,92 @@ public class NotificationStackScrollLayout
         setExpandedHeight(mExpandedHeight);
     }
 
-    public void setLockscreenBottomStackBounds(float top, float bottom, boolean onLockscreen,
+    public void setLockscreenStackBounds(float top, float bottom, boolean onLockscreen,
             boolean animate) {
-        boolean enabled = onLockscreen && !mShouldUseSplitNotificationShade;
-        boolean changed = enabled != mLockscreenBottomStackEnabled
-                || top != mLockscreenBottomStackTop || bottom != mLockscreenBottomStackBottom;
-        mLockscreenBottomStackEnabled = enabled;
-        mLockscreenBottomStackTop = top;
-        mLockscreenBottomStackBottom = bottom;
+        mLockscreenStackOnLockscreen = onLockscreen;
+        boolean enabled = mLockscreenStackExperimentEnabled
+                && onLockscreen && !mShouldUseSplitNotificationShade;
+        boolean changed = enabled != mLockscreenStackEnabled
+                || top != mLockscreenStackTop || bottom != mLockscreenStackBottom;
+        mLockscreenStackEnabled = enabled;
+        mLockscreenStackTop = top;
+        mLockscreenStackBottom = bottom;
         if (!enabled) {
-            mLockscreenNotificationsExpanded = false;
-        }
-        if (changed) {
-            setMaxDisplayedNotifications(mRequestedMaxDisplayedNotifications);
+            if (mLockscreenStackGestureActive) {
+                mActivePointerId = INVALID_POINTER;
+                endDrag();
+            }
+            clearLockscreenStackGesture();
+            if (mLockscreenStackSettleAnimation != null) {
+                mLockscreenStackSettleAnimation.cancel();
+            }
+            setLockscreenStackExpansion(0f);
         }
         updateTopPadding(top, animate);
         if (changed) {
             updateContentHeight();
             requestChildrenUpdate();
         }
+    }
+
+    // Rime: the native lock screen deck, on only while Rime's lock screen shows native notifications.
+    private static java.lang.ref.WeakReference<NotificationStackScrollLayout> sRimeInstance =
+            new java.lang.ref.WeakReference<>(null);
+    private static boolean sRimeStackEnabled;
+    private int mRequestedMaxDisplayedNotifications = -1;
+
+    /** Main thread only. Switches the native lock screen deck for Rime's native notifications. */
+    public static void setRimeStackEnabled(boolean enabled) {
+        sRimeStackEnabled = enabled;
+        NotificationStackScrollLayout layout = sRimeInstance.get();
+        if (layout != null) layout.setLockscreenStackExperimentEnabled(enabled);
+    }
+
+    private final android.graphics.Paint mRimeLipPaint =
+            new android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG);
+    private final android.graphics.RectF mRimeLipRect = new android.graphics.RectF();
+
+    /**
+     * Rime: under each stacked app group, the edges of the cards behind it, narrower and fainter
+     * with depth. Drawn here, behind the rows, in the room StackScrollAlgorithm leaves for them.
+     */
+    private void drawRimeGroupLips(Canvas canvas) {
+        float density = getResources().getDisplayMetrics().density;
+        int step = mStackScrollAlgorithm.getRimeLipStep();
+        for (int i = 0; i < getChildCount(); i++) {
+            if (!(getChildAt(i) instanceof ExpandableNotificationRow row)) continue;
+            int lips = StackScrollAlgorithm.rimeGroupLipCount(row);
+            if (lips == 0 || row.getVisibility() != View.VISIBLE || row.getAlpha() <= 0f) continue;
+            // Cards behind the deck's front card already read as a stack.
+            if (row.getViewState().lockscreenStackDepth > 0 && mLockscreenStackExpansion < 1f) continue;
+            float scale = row.getScaleY();
+            float top = row.getTranslationY() + row.getActualHeight() * scale;
+            float left = row.getLeft() + row.getTranslation();
+            float right = row.getRight() + row.getTranslation();
+            float radius = 16 * density;
+            int color = row.getCurrentBackgroundTint();
+            for (int lip = lips; lip >= 1; lip--) {
+                float inset = lip * 10 * density;
+                mRimeLipRect.set(left + inset, top - radius, right - inset, top + lip * step);
+                mRimeLipPaint.setColor(color);
+                mRimeLipPaint.setAlpha(Math.round(row.getAlpha() * (lip == 1 ? 150 : 90)));
+                canvas.drawRoundRect(mRimeLipRect, radius, radius, mRimeLipPaint);
+            }
+        }
+    }
+
+    public static boolean isRimeStackEnabled() {
+        return sRimeStackEnabled;
+    }
+
+    public void setLockscreenStackExperimentEnabled(boolean enabled) {
+        if (mLockscreenStackExperimentEnabled == enabled) return;
+        mLockscreenStackExperimentEnabled = enabled;
+        setMaxDisplayedNotifications(mRequestedMaxDisplayedNotifications);
+        setWillNotDraw(!(enabled || SceneContainerFlag.isEnabled() || mDebugLines));
+        invalidate();
+        setLockscreenStackBounds(mLockscreenStackTop, mLockscreenStackBottom,
+                mLockscreenStackOnLockscreen, false);
     }
 
     public int getLayoutMinHeight() {
@@ -4014,6 +4115,295 @@ public class NotificationStackScrollLayout
         }
     }
 
+    private boolean canHandleLockscreenStackGesture() {
+        return mLockscreenStackEnabled
+                && !SceneContainerFlag.isEnabled()
+                && mAmbientState.isOnKeyguard()
+                && mAmbientState.getDozeAmount() == 0f
+                && mAmbientState.getFractionToShade() == 0f
+                && !mAmbientState.isExpansionChanging()
+                && !mLaunchingNotification;
+    }
+
+    private boolean isTouchOnVisibleNotificationStack(MotionEvent event) {
+        int rawX = Math.round(event.getRawX());
+        int rawY = Math.round(event.getRawY());
+        getRootView().getLocationOnScreen(mRootLocationOnScreen);
+        boolean touchesNotificationRow = false;
+        boolean touchesOtherChild = false;
+        boolean touchesEligibleRow = false;
+        for (int i = 0; i < getChildCount(); i++) {
+            View child = getChildAt(i);
+            if (child.getVisibility() != View.VISIBLE
+                    || !child.getGlobalVisibleRect(mLockscreenStackHitRect)) {
+                continue;
+            }
+            mLockscreenStackHitRect.offset(
+                    mRootLocationOnScreen[0], mRootLocationOnScreen[1]);
+            if (!mLockscreenStackHitRect.contains(rawX, rawY)) continue;
+            if (child instanceof ExpandableNotificationRow row) {
+                touchesNotificationRow = true;
+                touchesEligibleRow |= isLockscreenStackGestureRow(row) && row.getAlpha() > 0f;
+            } else {
+                touchesOtherChild = true;
+            }
+        }
+        if (touchesNotificationRow || touchesOtherChild) {
+            return touchesEligibleRow && !touchesOtherChild;
+        }
+        return mLockscreenStackExpansion >= 1f
+                && event.getY() >= mLockscreenStackTop
+                && event.getY() <= mLockscreenStackBottom;
+    }
+
+    private static boolean isLockscreenStackGestureRow(ExpandableNotificationRow row) {
+        return !row.willBeGone()
+                && !row.isHeadsUpState()
+                && !row.isPinned()
+                && !row.showingPulsing()
+                && !row.areGutsExposed()
+                && !row.isUserLocked()
+                && !row.isChildInGroup();
+    }
+
+    private void armLockscreenStackGesture(MotionEvent event) {
+        if (mLockscreenStackGestureActive) {
+            mActivePointerId = INVALID_POINTER;
+            endDrag();
+        }
+        clearLockscreenStackGesture();
+        if (!canHandleLockscreenStackGesture()
+                || !isTouchOnVisibleNotificationStack(event)) {
+            return;
+        }
+        mLockscreenStackGestureArmed = true;
+        mLockscreenStackGestureStartedDuringSettle =
+                mLockscreenStackSettleAnimation != null
+                        && mLockscreenStackSettleAnimation.isRunning();
+        mLockscreenStackGestureDownX = event.getX();
+        mLockscreenStackGestureDownY = event.getY();
+        mLockscreenStackGestureStartExpansion = mLockscreenStackExpansion;
+        mLockscreenStackGesturePointerId = event.getPointerId(0);
+        mLockscreenStackGestureVelocityTracker = VelocityTracker.obtain();
+        mLockscreenStackGestureVelocityTracker.addMovement(event);
+    }
+
+    private void clearLockscreenStackGesture() {
+        mLockscreenStackGestureArmed = false;
+        mLockscreenStackGestureActive = false;
+        mLockscreenStackGestureStartedDuringSettle = false;
+        mLockscreenStackGesturePointerId = INVALID_POINTER;
+        if (mLockscreenStackGestureVelocityTracker != null) {
+            mLockscreenStackGestureVelocityTracker.recycle();
+            mLockscreenStackGestureVelocityTracker = null;
+        }
+    }
+
+    @VisibleForTesting
+    static boolean isDominantVerticalDrag(float deltaX, float deltaY, float touchSlop) {
+        return Math.abs(deltaY) > touchSlop && Math.abs(deltaY) > Math.abs(deltaX);
+    }
+
+    @VisibleForTesting
+    static boolean shouldStartLockscreenStackGesture(float expansion, float deltaX,
+            float deltaY, float touchSlop, int scrollY) {
+        if (!isDominantVerticalDrag(deltaX, deltaY, touchSlop)) return false;
+        if (deltaY < 0f) {
+            return expansion < 1f;
+        }
+        return expansion > 0f && scrollY == 0;
+    }
+
+    @VisibleForTesting
+    static float lockscreenStackExpansionForDrag(float startExpansion, float startY,
+            float currentY, float expansionDistance) {
+        if (expansionDistance <= 0f) return MathUtils.constrain(startExpansion, 0f, 1f);
+        return MathUtils.constrain(startExpansion + (startY - currentY) / expansionDistance,
+                0f, 1f);
+    }
+
+    @VisibleForTesting
+    static int lockscreenStackSettleTarget(float expansion, float yVelocity,
+            float minimumVelocity) {
+        return lockscreenStackSettleTarget(expansion, yVelocity, minimumVelocity, false);
+    }
+
+    @VisibleForTesting
+    static int lockscreenStackSettleTarget(float expansion, float yVelocity,
+            float minimumVelocity, boolean cancelled) {
+        if (!cancelled && yVelocity <= -minimumVelocity) return 1;
+        if (!cancelled && yVelocity >= minimumVelocity) return 0;
+        return expansion >= 0.5f ? 1 : 0;
+    }
+
+    boolean onInterceptLockscreenStackGesture(MotionEvent event) {
+        if (!mLockscreenStackGestureArmed) return false;
+        if (mLockscreenStackGestureActive) return true;
+        int action = event.getActionMasked();
+        if (action == MotionEvent.ACTION_MOVE) {
+            int pointerIndex = event.findPointerIndex(mLockscreenStackGesturePointerId);
+            if (pointerIndex < 0) return false;
+            float deltaX = event.getX(pointerIndex) - mLockscreenStackGestureDownX;
+            float deltaY = event.getY(pointerIndex) - mLockscreenStackGestureDownY;
+            float touchSlop = getTouchSlop(event);
+            if (Math.abs(deltaX) > touchSlop && Math.abs(deltaX) >= Math.abs(deltaY)) {
+                clearLockscreenStackGesture();
+                return false;
+            }
+            if (shouldStartLockscreenStackGesture(mLockscreenStackExpansion,
+                    deltaX, deltaY, touchSlop, getOwnScrollY())) {
+                beginLockscreenStackGesture(event.getX(pointerIndex), event.getY(pointerIndex));
+                return true;
+            }
+        } else if (action == ACTION_UP || action == ACTION_CANCEL) {
+            clearLockscreenStackGesture();
+        }
+        return false;
+    }
+
+    boolean onTouchLockscreenStackGesture(MotionEvent event) {
+        if (!mLockscreenStackGestureArmed) return false;
+        int action = event.getActionMasked();
+        if (!mLockscreenStackGestureActive && action == MotionEvent.ACTION_MOVE) {
+            int pointerIndex = event.findPointerIndex(mLockscreenStackGesturePointerId);
+            if (pointerIndex < 0) return false;
+            float deltaX = event.getX(pointerIndex) - mLockscreenStackGestureDownX;
+            float deltaY = event.getY(pointerIndex) - mLockscreenStackGestureDownY;
+            float touchSlop = getTouchSlop(event);
+            if (Math.abs(deltaX) > touchSlop && Math.abs(deltaX) >= Math.abs(deltaY)) {
+                clearLockscreenStackGesture();
+                return false;
+            }
+            if (shouldStartLockscreenStackGesture(mLockscreenStackExpansion,
+                    deltaX, deltaY, touchSlop, getOwnScrollY())) {
+                beginLockscreenStackGesture(event.getX(pointerIndex), event.getY(pointerIndex));
+            }
+        }
+
+        if (!mLockscreenStackGestureActive) {
+            if (action == ACTION_UP || action == ACTION_CANCEL) {
+                clearLockscreenStackGesture();
+            }
+            return false;
+        }
+
+        switch (action) {
+            case MotionEvent.ACTION_MOVE: {
+                int pointerIndex = event.findPointerIndex(mLockscreenStackGesturePointerId);
+                if (pointerIndex >= 0) {
+                    updateLockscreenStackExpansionFromFinger(event.getY(pointerIndex));
+                }
+                return true;
+            }
+            case MotionEvent.ACTION_POINTER_UP: {
+                int pointerIndex = event.getActionIndex();
+                if (event.getPointerId(pointerIndex) == mLockscreenStackGesturePointerId
+                        && event.getPointerCount() > 1) {
+                    int nextPointer = pointerIndex == 0 ? 1 : 0;
+                    mLockscreenStackGesturePointerId = event.getPointerId(nextPointer);
+                    mLockscreenStackGestureDownY = event.getY(nextPointer);
+                    mLockscreenStackGestureDownX = event.getX(nextPointer);
+                    mLockscreenStackGestureStartExpansion = mLockscreenStackExpansion;
+                }
+                return true;
+            }
+            case ACTION_UP:
+                finishLockscreenStackGesture(false);
+                return true;
+            case ACTION_CANCEL:
+                finishLockscreenStackGesture(true);
+                return true;
+            default:
+                return true;
+        }
+    }
+
+    private void beginLockscreenStackGesture(float currentX, float currentY) {
+        if (mLockscreenStackGestureActive) return;
+        if (mLockscreenStackGestureStartedDuringSettle) {
+            if (mLockscreenStackSettleAnimation != null
+                    && mLockscreenStackSettleAnimation.isRunning()) {
+                mLockscreenStackSettleAnimation.cancel();
+            }
+            mLockscreenStackGestureStartExpansion = mLockscreenStackExpansion;
+            mLockscreenStackGestureDownX = currentX;
+            mLockscreenStackGestureDownY = currentY;
+            mLockscreenStackGestureStartedDuringSettle = false;
+        }
+        mLockscreenStackGestureActive = true;
+        setIsBeingDragged(true);
+        if (mTouchHandler != null) {
+            mTouchHandler.onLockscreenStackGestureClaimed();
+        }
+        for (int i = 0; i < getChildCount(); i++) {
+            View child = getChildAt(i);
+            if (child instanceof ExpandableNotificationRow row
+                    && isLockscreenStackGestureRow(row)) {
+                row.getViewState().cancelAnimationsForImmediateUpdate(row);
+            }
+        }
+    }
+
+    private float getLockscreenStackExpansionDistance() {
+        return getLockscreenStackExpansionDistance(0);
+    }
+
+    private float getLockscreenStackExpansionDistance(int listScrollY) {
+        float distance = mStackScrollAlgorithm.getLockscreenStackExpansionDistance() - listScrollY;
+        if (!Float.isFinite(distance) || distance <= mTouchSlop) {
+            distance = Math.max(getHeight() * 0.5f, mTouchSlop * 2f);
+        }
+        return Math.max(distance, 1f);
+    }
+
+    private void updateLockscreenStackExpansionFromFinger(float currentY) {
+        updateLockscreenStackExpansionFromFinger(
+                currentY, getLockscreenStackExpansionDistance());
+    }
+
+    private void updateLockscreenStackExpansionFromFinger(float currentY, float distance) {
+        setLockscreenStackExpansion(lockscreenStackExpansionForDrag(
+                mLockscreenStackGestureStartExpansion,
+                mLockscreenStackGestureDownY,
+                currentY,
+                Math.max(distance, 1f)));
+    }
+
+    private void finishLockscreenStackGesture(boolean cancelled) {
+        float yVelocity = 0f;
+        if (!cancelled && mLockscreenStackGestureVelocityTracker != null) {
+            mLockscreenStackGestureVelocityTracker.computeCurrentVelocity(1000, mMaximumVelocity);
+            yVelocity = mLockscreenStackGestureVelocityTracker.getYVelocity(
+                    mLockscreenStackGesturePointerId);
+        }
+        int target = lockscreenStackSettleTarget(mLockscreenStackExpansion,
+                yVelocity, mMinimumVelocity, cancelled);
+        settleLockscreenStack(target, yVelocity);
+        mActivePointerId = INVALID_POINTER;
+        endDrag();
+        clearLockscreenStackGesture();
+    }
+
+    private void settleLockscreenStack(int target, float yVelocity) {
+        float targetExpansion = target;
+        if (Math.abs(targetExpansion - mLockscreenStackExpansion) < 0.001f) {
+            setLockscreenStackExpansion(targetExpansion);
+            return;
+        }
+        if (mLockscreenStackSettleAnimation == null) {
+            mLockscreenStackSettleAnimation = new SpringAnimation(
+                    this, LOCKSCREEN_STACK_EXPANSION);
+        } else {
+            mLockscreenStackSettleAnimation.cancel();
+        }
+        mLockscreenStackSettleAnimation.setSpring(new SpringForce(targetExpansion)
+                .setStiffness(SpringForce.STIFFNESS_MEDIUM)
+                .setDampingRatio(SpringForce.DAMPING_RATIO_NO_BOUNCY));
+        mLockscreenStackSettleAnimation.setStartVelocity(
+                -yVelocity / getLockscreenStackExpansionDistance());
+        mLockscreenStackSettleAnimation.animateToFinalPosition(targetExpansion);
+    }
+
     private float getTouchSlop(MotionEvent event) {
         // Adjust the touch slop if another gesture may be being performed.
         return event.getClassification() == MotionEvent.CLASSIFICATION_AMBIGUOUS_GESTURE
@@ -4149,6 +4539,12 @@ public class NotificationStackScrollLayout
 
     @Override
     public boolean dispatchTouchEvent(MotionEvent ev) {
+        if (ev.getActionMasked() == ACTION_DOWN) {
+            armLockscreenStackGesture(ev);
+        } else if (mLockscreenStackGestureVelocityTracker != null) {
+            mLockscreenStackGestureVelocityTracker.addMovement(ev);
+        }
+
         if (SceneContainerFlag.isEnabled()) {
             int action = ev.getActionMasked();
             boolean isTouchInGuts = mController.isTouchInGutsView(ev);
@@ -4187,7 +4583,12 @@ public class NotificationStackScrollLayout
             }
         }
         // dispatch all touches to TouchHandlers, so they can decide whether they want to handle it.
-        return TouchLogger.logDispatchTouch(TAG, ev, super.dispatchTouchEvent(ev));
+        boolean handled = super.dispatchTouchEvent(ev);
+        if ((ev.getActionMasked() == ACTION_UP || ev.getActionMasked() == ACTION_CANCEL)
+                && mLockscreenStackGestureArmed) {
+            clearLockscreenStackGesture();
+        }
+        return TouchLogger.logDispatchTouch(TAG, ev, handled);
     }
 
     void dispatchDownEventToScroller(MotionEvent ev) {
@@ -4321,19 +4722,28 @@ public class NotificationStackScrollLayout
                 final int xDiff = Math.abs(x - mDownX);
                 final int yDiff = Math.abs(deltaY);
                 final float touchSlop = getTouchSlop(ev);
-                if (mLockscreenBottomStackEnabled && mAmbientState.isOnKeyguard()
-                        && mLockscreenCollapsedMaxNotifications > 0 && yDiff > touchSlop) {
-                    if (deltaY > 0 && !mLockscreenNotificationsExpanded) {
-                        expandLockscreenBottomStack();
-                    } else if (
-                            deltaY < 0 &&
-                                    mLockscreenNotificationsExpanded &&
-                                    getOwnScrollY() == 0
-                    ) {
-                        mLockscreenNotificationsExpanded = false;
-                        setMaxDisplayedNotifications(mRequestedMaxDisplayedNotifications);
-                        updateContentHeight();
-                        requestChildrenUpdate();
+                if (mLockscreenStackGestureArmed
+                        && !mLockscreenStackGestureActive
+                        && mLockscreenStackExpansion > 0f
+                        && deltaY < 0
+                        && getOwnScrollY() > 0
+                        && isDominantVerticalDrag(
+                                ev.getX() - mLockscreenStackGestureDownX,
+                                ev.getY() - mLockscreenStackGestureDownY,
+                                touchSlop)) {
+                    float downwardDrag = -deltaY;
+                    int scrollYBeforeTakeover = getOwnScrollY();
+                    float excessDownwardDrag = downwardDrag - scrollYBeforeTakeover;
+                    if (excessDownwardDrag > 0f) {
+                        float expansionDistance = getLockscreenStackExpansionDistance(
+                                scrollYBeforeTakeover);
+                        setOwnScrollY(0, false);
+                        beginLockscreenStackGesture(ev.getX(), ev.getY());
+                        mLockscreenStackGestureDownY = ev.getY() - excessDownwardDrag;
+                        mLockscreenStackGestureStartExpansion = mLockscreenStackExpansion;
+                        mLastMotionY = y;
+                        updateLockscreenStackExpansionFromFinger(ev.getY(), expansionDistance);
+                        return true;
                     }
                 }
                 if (!mIsBeingDragged && yDiff > touchSlop && yDiff > xDiff) {
@@ -4357,6 +4767,7 @@ public class NotificationStackScrollLayout
                     if (mExpandedInThisMotion) {
                         range = Math.min(range, mMaxScrollAfterExpand);
                     }
+                    int scrollYBefore = getOwnScrollY();
                     if (deltaY < 0) {
                         scrollAmount = overScrollDown(deltaY);
                     } else {
@@ -4370,6 +4781,16 @@ public class NotificationStackScrollLayout
                         // existing overScroll, we have to scroll the view
                         customOverScrollBy((int) scrollAmount, getOwnScrollY(),
                                 range, getHeight() / 2);
+                    }
+                    if (mLockscreenStackGestureArmed
+                            && !mLockscreenStackGestureActive
+                            && mLockscreenStackExpansion > 0f
+                            && deltaY < 0
+                            && scrollYBefore > 0
+                            && getOwnScrollY() == 0) {
+                        mLockscreenStackGestureDownY = y;
+                        mLockscreenStackGestureDownX = x;
+                        mLockscreenStackGestureStartExpansion = mLockscreenStackExpansion;
                     }
                 }
                 break;
@@ -5828,14 +6249,9 @@ public class NotificationStackScrollLayout
     @Override
     public void setMaxDisplayedNotifications(int maxDisplayedNotifications) {
         mRequestedMaxDisplayedNotifications = maxDisplayedNotifications;
-        if (!mLockscreenBottomStackEnabled) {
-            mLockscreenNotificationsExpanded = false;
-        } else {
-            mLockscreenCollapsedMaxNotifications = maxDisplayedNotifications < 0
-                    ? 2 : (maxDisplayedNotifications == 0 ? 0 : 2);
-            maxDisplayedNotifications = mLockscreenNotificationsExpanded
-                    ? -1 : mLockscreenCollapsedMaxNotifications;
-        }
+        // Rime: the deck stacks every notification at the bottom; the room under the (hidden)
+        // native clock that sets this limit says nothing about it.
+        if (mLockscreenStackExperimentEnabled) maxDisplayedNotifications = -1;
         if (mMaxDisplayedNotifications != maxDisplayedNotifications) {
             if (mLogger != null) {
                 mLogger.setMaxDisplayedNotifications(maxDisplayedNotifications);
@@ -5854,11 +6270,15 @@ public class NotificationStackScrollLayout
         }
     }
 
-    public void expandLockscreenBottomStack() {
-        if (!mLockscreenBottomStackEnabled || mLockscreenNotificationsExpanded) return;
-        mLockscreenNotificationsExpanded = true;
-        setMaxDisplayedNotifications(mRequestedMaxDisplayedNotifications);
-        updateContentHeight();
+    @VisibleForTesting
+    void setLockscreenStackExpansion(float expansion) {
+        float constrainedExpansion = MathUtils.constrain(expansion, 0f, 1f);
+        if (!mLockscreenStackEnabled) {
+            constrainedExpansion = 0f;
+        }
+        if (mLockscreenStackExpansion == constrainedExpansion) return;
+        mLockscreenStackExpansion = constrainedExpansion;
+        mAmbientState.setLockscreenStackExpansion(constrainedExpansion);
         requestChildrenUpdate();
     }
 
@@ -6735,6 +7155,15 @@ public class NotificationStackScrollLayout
         // When launching notifications, we're clipping the children individually instead of in
         // dispatchDraw
         invalidate();
+    }
+
+    boolean isLaunchingNotification() {
+        return mLaunchingNotification;
+    }
+
+    boolean shouldPrioritizeLockscreenStackGesture() {
+        return mLockscreenStackEnabled
+                && (mLockscreenStackGestureActive || mLockscreenStackExpansion < 1f);
     }
 
     /**

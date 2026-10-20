@@ -131,7 +131,7 @@ constructor(
                                 .collect { (bounds, onLockscreen) ->
                                     val animate =
                                         bounds.isAnimated || controller.isAddOrRemoveAnimationPending
-                                    controller.setLockscreenBottomStackBounds(
+                                    controller.setLockscreenStackBounds(
                                         bounds.top,
                                         bounds.bottom,
                                         onLockscreen,

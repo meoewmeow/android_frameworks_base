@@ -94,6 +94,10 @@ public class ExpandableViewState extends ViewState {
     public boolean hideSensitive;
     public boolean belowSpeedBump;
     public boolean inShelf;
+    public int lockscreenStackDepth = -1;
+    public float lockscreenStackListAlpha = 1f;
+    public float lockscreenStackVisibilityAlpha = 1f;
+    public float lockscreenStackContentAlpha = 1f;
 
     /**
      * A state indicating whether a headsup is currently fully visible, even when not scrolled.
@@ -136,7 +140,18 @@ public class ExpandableViewState extends ViewState {
             notGoneIndex = svs.notGoneIndex;
             location = svs.location;
             headsUpIsVisible = svs.headsUpIsVisible;
+            lockscreenStackDepth = svs.lockscreenStackDepth;
+            lockscreenStackListAlpha = svs.lockscreenStackListAlpha;
+            lockscreenStackVisibilityAlpha = svs.lockscreenStackVisibilityAlpha;
+            lockscreenStackContentAlpha = svs.lockscreenStackContentAlpha;
         }
+    }
+
+    public void cancelAnimationsForImmediateUpdate(View view) {
+        super.cancelAnimationsForImmediateUpdate(view);
+        abortAnimation(view, TAG_ANIMATOR_HEIGHT);
+        abortAnimation(view, TAG_ANIMATOR_TOP_INSET);
+        abortAnimation(view, TAG_ANIMATOR_BOTTOM_INSET);
     }
 
     /**
@@ -172,6 +187,10 @@ public class ExpandableViewState extends ViewState {
 
             expandableView.setTransformingInShelf(false);
             expandableView.setInShelf(inShelf);
+
+            if (expandableView instanceof ExpandableNotificationRow row) {
+                row.setLockscreenStackContentAlpha(lockscreenStackContentAlpha);
+            }
 
             if (headsUpIsVisible) {
                 expandableView.markHeadsUpSeen();
