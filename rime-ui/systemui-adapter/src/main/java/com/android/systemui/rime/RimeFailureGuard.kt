@@ -47,7 +47,9 @@ class RimeFailureGuard @Inject constructor(
             override fun run() {
                 if (active.get()) {
                     if (SystemClock.uptimeMillis() - acknowledgement > HEARTBEAT_TIMEOUT_MS) {
-                        val persisted = trip("main thread heartbeat timeout", null)
+                        // Logcat rolls over within the hour, so keep what the main thread was stuck in.
+                        val stuckIn = main.looper.thread.stackTrace.take(STACK_FRAMES).joinToString("\n")
+                        val persisted = trip("main thread heartbeat timeout", null, stuckIn)
                         // A blocked main Looper cannot restore views or service input. Let the
                         // existing persistent-app supervisor restart SystemUI in native mode.
                         // Never restart unless the disable latch was durably recorded.
@@ -91,15 +93,17 @@ class RimeFailureGuard @Inject constructor(
             null
         }
     }
-    fun trip(stage: String, failure: Throwable?): Boolean {
+    fun trip(stage: String, failure: Throwable?, mainStack: String? = null): Boolean {
         active.set(false)
         if (!failed.compareAndSet(false, true)) return preferences.getBoolean("failed", false)
+        val stack = mainStack ?: failure?.stackTrace?.take(STACK_FRAMES)?.joinToString("\n")
         val durable = preferences.edit().putBoolean("failed", true).putBoolean("armed", false)
-            .putString("failureStage", stage).putString("failureType", failure?.javaClass?.name ?: "watchdog").commit()
+            .putString("failureStage", stage).putString("failureType", failure?.javaClass?.name ?: "watchdog")
+            .putString("failureStack", stack).putLong("failureAt", System.currentTimeMillis()).commit()
         disableRequest()
         // Do not log notification content or Throwable messages.
         Log.e(TAG, "Disabled Rime at $stage (${failure?.javaClass?.name ?: "watchdog"})")
-        failure?.stackTrace?.take(12)?.forEach { Log.e(TAG, it.toString()) }
+        stack?.lineSequence()?.forEach { Log.e(TAG, it) }
         val recover = Runnable {
             try { onFailure?.invoke() } catch (_: RuntimeException) { Log.e(TAG, "Failure cleanup callback failed; circuit remains open") }
         }
@@ -115,5 +119,6 @@ class RimeFailureGuard @Inject constructor(
         const val RESET_KEY = "rime_lockscreen_reset_failures"
         private const val TAG = "RimeLockscreenGuard"
         private const val HEARTBEAT_TIMEOUT_MS = 4000L
+        private const val STACK_FRAMES = 25
     }
 }
